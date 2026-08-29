@@ -1,5 +1,5 @@
 import lineGeometriesData from "@/data/lineGeometries.json";
-import { buildNetwork, haversine, type Place, type TransitNetwork } from "./network";
+import { buildNetwork, haversine, formatTime, type Place, type TransitNetwork } from "./network";
 import { walkRoute, clearWalkCache } from "./ors";
 
 clearWalkCache();
@@ -14,7 +14,7 @@ export const PARAMS = {
   metroSpeedKmh: 32,
   busWaitMin: 5,
   metroWaitMin: 4,
-  transferPenaltyMin: 3,
+  transferPenaltyMin: 6,
   maxAccessWalkM: 1500,
   maxTransferWalkM: 700,
   co2PerKm: { walk: 0, bus: 68, metro: 22 },
@@ -42,8 +42,7 @@ export interface LatLng {
 
 export interface Leg {
   mode: "walk" | "bus" | "metro";
-  /** bus route name / metro line name */
-  line?: string;
+  line?: string | undefined;
   busNumber?: string | undefined;
   from: string;
   to: string;
@@ -52,25 +51,28 @@ export interface Leg {
   co2g: number;
   stops?: string[];
   path: { lat: number; lon: number }[];
-  frequencyMin?: number;
+  frequencyMin?: number | undefined;
+  tripsPerDay?: number | undefined;
+  frequencyRating?: "high" | "medium" | "low" | undefined;
+  departureTimeStr?: string | undefined;
+  arrivalTimeStr?: string | undefined;
+  waitMin?: number | undefined;
+  nextDepartures?: string[] | undefined;
 }
 
 export interface Journey {
   legs: Leg[];
-  /** Total distance of all legs (walking + transit) in meters */
   totalDistanceM: number;
-  /** Total distance traveled by transit (bus + metro) in meters */
   transitDistanceM: number;
-  /** Total journey duration in minutes */
-  totalTimeMin: number;
-  /** Total pedestrian walking distance in meters */
   walkDistanceM: number;
-  /** Total number of transit transfers / interchanges */
+  totalTimeMin: number;
   transfers: number;
-  /** Total CO₂ footprint of the journey in grams */
-  co2g: number;
-  /** Multi-objective routing score */
   score: number;
+  co2g: number;
+  signature?: string | undefined;
+  departureTimeStr?: string | undefined;
+  arrivalTimeStr?: string | undefined;
+  departureTimeMin?: number | undefined;
 }
 
 interface Metrics {
@@ -263,7 +265,16 @@ placeSpatialIndex.insertAll(net.placeList);
         if (j < 0 || j >= line.placeIds.length) continue;
         const a = line.points[i]!;
         const b = line.points[j]!;
-        const d = haversine(a.lat, a.lon, b.lat, b.lon) * 1.2;
+        const d = haversine(a.lat, a.lon, b.lat, b.lon) * 1.25;
+
+        // Exact timetable segment time derived directly from official duration_min
+        let segTime = (d / 1000 / speed) * 60;
+        if (line.mode === "bus" && line.stopOffsets && line.stopOffsets[j] != null && line.stopOffsets[i] != null) {
+          segTime = Math.max(0.1, Math.abs(line.stopOffsets[j]! - line.stopOffsets[i]!));
+        } else if (line.mode === "metro") {
+          segTime = (d / 1000 / speed) * 60 + 0.3;
+        }
+
         addEdge(rideNode(line.id, i), {
           to: rideNode(line.id, j),
           kind: "ride",
@@ -272,7 +283,7 @@ placeSpatialIndex.insertAll(net.placeList);
           fromPlace: line.placeIds[i]!,
           toPlace: line.placeIds[j]!,
           distanceM: d,
-          timeMin: (d / 1000 / speed) * 60 + 0.4,
+          timeMin: segTime,
           co2g: (d / 1000) * co2,
         });
       }
@@ -510,6 +521,7 @@ function search(
   accessEdges?: Edge[],
   egressEdges?: Map<string, Edge>,
   directWalkEdge?: Edge,
+  departureTimeMin?: number,
 ) {
   const ORIGIN = "ORIGIN";
   const DEST = "DEST";
@@ -597,17 +609,82 @@ function search(
       break;
     }
 
-    const curTrace = trace.get(cur.key)!;
+        const curTrace = trace.get(cur.key)!;
     for (const e of edgesOf(cur.node)) {
       let nextLineId: string | undefined;
       let newBoardings = curTrace.m.boardings;
       let transferPenalty = 0;
+      let edgeTimeMin = e.timeMin;
 
       if (e.kind === "board") {
         nextLineId = e.lineId;
         newBoardings += 1;
         if (curTrace.m.boardings > 0) {
           transferPenalty = PARAMS.transferPenaltyMin;
+        }
+
+        // ── TIME-DEPENDENT TIMETABLE CHECK ──
+        const line = net.lines.get(e.lineId!);
+        if (line) {
+          const now = new Date();
+          const depMin = departureTimeMin != null ? departureTimeMin : (now.getHours() * 60 + now.getMinutes());
+          const arrivalAtStopMin = depMin + curTrace.m.timeMin;
+
+          if (line.mode === "bus") {
+            const stopIdxMatch = e.to.match(/:(\d+)$/);
+            const stopIdx = stopIdxMatch ? parseInt(stopIdxMatch[1]!, 10) : 0;
+            const offset = (line.stopOffsets && line.stopOffsets[stopIdx] != null) ? line.stopOffsets[stopIdx]! : 0;
+            const departures = line.departures || [];
+
+            // Filter out 0 and 1439 dummy entries
+            const validDepartures = departures.filter((d) => d > 0 && d < 1439);
+
+            if (validDepartures.length > 0) {
+              const stopDepartures = validDepartures.map((d) => d + offset);
+              const nextDep = stopDepartures.find((d) => d >= arrivalAtStopMin);
+              if (nextDep == null) {
+                // No more buses scheduled today after this hour
+                continue;
+              }
+              const waitMin = nextDep - arrivalAtStopMin;
+              if (waitMin > 90) {
+                // Next bus is more than 1.5 hours away
+                continue;
+              }
+              const trips = line.tripsPerDay || 1;
+              const headway = line.headwayMin || line.frequencyMin || 30;
+              // Strong frequency optimization:
+              // Buses running >=20 trips/day get minimal +1m headway cost.
+              // Buses running <5 trips/day get up to +15m penalty so frequent lines are heavily prioritized!
+              let headwayPenalty = 2;
+              if (trips >= 25) {
+                headwayPenalty = 1;
+              } else if (trips >= 10) {
+                headwayPenalty = 3;
+              } else if (trips < 5) {
+                headwayPenalty = 14;
+              } else {
+                headwayPenalty = Math.min(12, Math.max(2, headway * 0.2));
+              }
+
+              edgeTimeMin = Math.max(1, waitMin) + headwayPenalty;
+            } else {
+              // If no timetable, enforce operating hours 06:00 to 22:30
+              if (arrivalAtStopMin < 360 || arrivalAtStopMin > 1350) {
+                continue;
+              }
+              const trips = line.tripsPerDay || 1;
+              const headwayPenalty = trips >= 15 ? 2 : 10;
+              edgeTimeMin = PARAMS.busWaitMin + headwayPenalty;
+            }
+          } else if (line.mode === "metro") {
+            // Nagpur Metro operates 06:00 AM (360) to 10:30 PM (1350)
+            if (arrivalAtStopMin < 360 || arrivalAtStopMin > 1350) {
+              continue;
+            }
+            // Metro is ultra-frequent (every 6 min) -> 0 headway penalty
+            edgeTimeMin = PARAMS.metroWaitMin;
+          }
         }
       } else if (e.kind === "ride") {
         nextLineId = e.lineId ?? cur.lineId;
@@ -622,7 +699,7 @@ function search(
       if (nextTransfers > 3) continue;
 
       const m: Metrics = {
-        timeMin: curTrace.m.timeMin + e.timeMin + transferPenalty,
+        timeMin: curTrace.m.timeMin + edgeTimeMin + transferPenalty,
         walkM: curTrace.m.walkM + (e.kind === "walk" ? e.distanceM : 0),
         transitM: curTrace.m.transitM + (e.kind === "ride" ? e.distanceM : 0),
         busM: curTrace.m.busM + (e.kind === "ride" && e.mode === "bus" ? e.distanceM : 0),
@@ -783,6 +860,7 @@ function toJourney(
   res: NonNullable<ReturnType<typeof search>>,
   origin: LatLng,
   destination: LatLng,
+  departureTimeMin?: number,
 ): Journey {
   const legs: Leg[] = [];
   const originName = origin.name ?? "Source";
@@ -813,7 +891,7 @@ function toJourney(
       let j = i + 1;
       const stops: string[] = [];
       let dist = 0;
-      let time = e.timeMin;
+      let time = 0; // Pure in-transit ride duration from official timetable
       let co2 = 0;
       const stopPoints: { lat: number; lon: number }[] = [];
       let boardPlace = "";
@@ -1067,23 +1145,26 @@ export async function planJourney(
   origin: LatLng,
   destination: LatLng,
   preference: Preference = "balanced",
+  departureTimeMin?: number,
 ): Promise<{ journeys: Journey[]; error?: string }> {
   const { accessEdges, egressEdges, directWalkEdge } =
     await resolveAccessEgressEdges(origin, destination);
 
+  const now = new Date();
+  const depMin = departureTimeMin != null ? departureTimeMin : (now.getHours() * 60 + now.getMinutes());
+
   // 1. Primary search for user's selected preference profile
   const primary = search(
     origin, destination, preference, undefined,
-    accessEdges, egressEdges, directWalkEdge,
+    accessEdges, egressEdges, directWalkEdge, depMin,
   );
   if (!primary) {
     return {
       journeys: [],
-      error:
-        "No public-transport connection found in the current dataset between these points. Try locations closer to a known bus stop or metro station.",
+      error: `No public-transport connection found at ${formatTime(depMin)}. Services operate daily from 06:00 AM to 10:30 PM.`,
     };
   }
-  const best = toJourney(primary, origin, destination);
+  const best = toJourney(primary, origin, destination, depMin);
 
   // 2. Multi-Objective candidate pool
   const candidatePool: Journey[] = [best];
@@ -1093,9 +1174,9 @@ export async function planJourney(
   const allPrefs: Preference[] = ["balanced", "fastest", "least_walk", "fewest_transfers", "low_co2"];
   for (const p of allPrefs) {
     if (p === preference) continue;
-    const res = search(origin, destination, p, undefined, accessEdges, egressEdges, directWalkEdge);
+    const res = search(origin, destination, p, undefined, accessEdges, egressEdges, directWalkEdge, depMin);
     if (!res) continue;
-    const j = toJourney(res, origin, destination);
+    const j = toJourney(res, origin, destination, depMin);
     const sig = signature(j);
     if (!seenSignatures.has(sig)) {
       seenSignatures.add(sig);
@@ -1107,9 +1188,9 @@ export async function planJourney(
   const usedLines = best.legs.filter((l) => l.mode !== "walk" && l.line != null).map((l) => l.line as string);
   for (const line of net.lines.values()) {
     if (!usedLines.includes(line.name)) continue;
-    const alt = search(origin, destination, preference, line.id, accessEdges, egressEdges, directWalkEdge);
+    const alt = search(origin, destination, preference, line.id, accessEdges, egressEdges, directWalkEdge, depMin);
     if (!alt) continue;
-    const j = toJourney(alt, origin, destination);
+    const j = toJourney(alt, origin, destination, depMin);
     const sig = signature(j);
     if (!seenSignatures.has(sig)) {
       seenSignatures.add(sig);
