@@ -44,6 +44,7 @@ export interface Leg {
   mode: "walk" | "bus" | "metro";
   /** bus route name / metro line name */
   line?: string;
+  busNumber?: string | undefined;
   from: string;
   to: string;
   distanceM: number;
@@ -844,6 +845,7 @@ function toJourney(
         legs.push({
           mode: line.mode,
           line: line.name,
+          busNumber: line.busNumber,
           from: boardPlace,
           to: lastPlace,
           distanceM: dist,
