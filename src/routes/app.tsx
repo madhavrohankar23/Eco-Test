@@ -145,6 +145,14 @@ function JourneyCard({
             </span>
             <span className="text-xs text-muted-foreground">{fmtDist(journey.totalDistanceM)}</span>
           </div>
+          {journey.departureTimeStr && journey.arrivalTimeStr && (
+            <div className="mt-1 flex items-center gap-1.5 text-xs font-bold text-primary">
+              <Clock className="size-3 shrink-0" />
+              <span>
+                {journey.departureTimeStr} – {journey.arrivalTimeStr}
+              </span>
+            </div>
+          )}
         </div>
         <div className="flex flex-col items-end gap-1">
           {journey.transfers === 0 ? (
@@ -303,11 +311,18 @@ function Itinerary({
               <span className="absolute left-[6px] top-1.5 z-10 size-2.5 rounded-full bg-[#64748b] ring-2 ring-background" />
 
               {/* Walk Text Row (Matching Image 2) */}
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Footprints className="size-3.5 shrink-0 text-slate-500" />
-                <span className="font-bold text-foreground">Walk {fmtDist(leg.distanceM)}</span>
-                <span>({Math.round(leg.timeMin)} min)</span>
-                <span className="truncate">to {leg.to}</span>
+              <div className="flex flex-col gap-0.5 text-xs">
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Footprints className="size-3.5 shrink-0 text-slate-500" />
+                  <span className="font-bold text-foreground">Walk {fmtDist(leg.distanceM)}</span>
+                  <span>({Math.round(leg.timeMin)} min)</span>
+                  <span className="truncate">to {leg.to}</span>
+                </div>
+                {leg.departureTimeStr && leg.arrivalTimeStr && (
+                  <div className="text-[11px] font-semibold text-muted-foreground pl-5">
+                    {leg.departureTimeStr} – {leg.arrivalTimeStr}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -346,12 +361,20 @@ function Itinerary({
                     {leg.line ?? leg.mode}
                   </span>
                 </div>
-                {leg.frequencyMin && (
+                {leg.frequencyRating === "high" ? (
+                  <span className="flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700 dark:text-emerald-400">
+                    🔥 Every ~{leg.frequencyMin || 10}m
+                  </span>
+                ) : leg.frequencyRating === "low" ? (
+                  <span className="flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
+                    ⚠️ {leg.tripsPerDay ? `${leg.tripsPerDay} trips/day` : "Low freq"}
+                  </span>
+                ) : leg.frequencyMin ? (
                   <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                     <Timer className="size-3" />
                     <span>every {leg.frequencyMin} min</span>
                   </span>
-                )}
+                ) : null}
               </div>
 
               {/* Row 2: Board at ... Get down at ... */}
@@ -361,6 +384,21 @@ function Itinerary({
                 <span className="text-muted-foreground"> · Get down at </span>
                 <span className="font-bold">{leg.to}</span>
               </p>
+
+              {/* Exact scheduled times */}
+              {(leg.departureTimeStr || leg.arrivalTimeStr) && (
+                <div className="mt-2 flex items-center justify-between flex-wrap gap-1 text-[11px] pt-1.5 border-t border-border/40">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                    <Clock className="size-3 text-primary shrink-0" />
+                    <span>Departs: <strong className="text-primary">{leg.departureTimeStr}</strong> · Arrives: <strong>{leg.arrivalTimeStr}</strong></span>
+                  </div>
+                  {leg.nextDepartures && leg.nextDepartures.length > 0 && (
+                    <span className="text-[10px] text-muted-foreground">
+                      Next: {leg.nextDepartures.join(", ")}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Row 3: Stops count · Distance · Time */}
               <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -556,7 +594,17 @@ function Planner() {
   
   const [origin, setOrigin] = useState<Point | null>(null);
   const [destination, setDestination] = useState<Point | null>(null);
-  const [pref, setPref] = useState<Preference>("balanced");
+    const [pref, setPref] = useState<Preference>("balanced");
+  const [departureTime, setDepartureTime] = useState<string>("now");
+
+  const getDepartureMinutes = () => {
+    if (departureTime === "now" || !departureTime) {
+      const now = new Date();
+      return now.getHours() * 60 + now.getMinutes();
+    }
+    const [h, m] = departureTime.split(":").map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
   const [picking, setPicking] = useState<"origin" | "destination" | null>(null);
   const [showNetwork, setShowNetwork] = useState(false);
   const [showBusStops, setShowBusStops] = useState(false);
@@ -657,7 +705,8 @@ function Planner() {
       try {
         // planJourney now pre-fetches ORS walk costs before Dijkstra,
         // so route selection uses accurate road distances, not haversine.
-        const raw = await planJourney(o, d, pref);
+        const depMin = getDepartureMinutes();
+        const raw = await planJourney(o, d, pref, depMin);
         setResult(raw);
 
         if (!raw.journeys.length) return;
@@ -1393,6 +1442,40 @@ function Planner() {
                       </button>
                     );
                   })}
+                </div>
+
+                {/* ── Departure Time Selector (Live Clock or Custom) ── */}
+                <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-secondary/30 px-3 py-2.5 shadow-xs">
+                  <div className="flex items-center gap-2">
+                    <Clock className="size-4 text-primary shrink-0" />
+                    <span className="text-xs font-bold text-foreground">Depart at</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={departureTime === "now" ? "" : departureTime}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setDepartureTime(val || "now");
+                      }}
+                      className="rounded-lg border border-border bg-background px-2 py-1 text-xs font-bold text-foreground shadow-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    {departureTime !== "now" ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDepartureTime("now");
+                        }}
+                        className="rounded-lg bg-primary/15 px-2 py-1 text-[11px] font-extrabold text-primary hover:bg-primary/25 transition"
+                      >
+                        Reset to Now
+                      </button>
+                    ) : (
+                      <span className="rounded-lg bg-emerald-500/15 px-2.5 py-1 text-[11px] font-extrabold text-emerald-700 dark:text-emerald-400">
+                        🟢 Live Now
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Plan Button & Save Route Button */}

@@ -1,4 +1,5 @@
 import raw from "@/data/network.json";
+import schedulesData from "@/data/bus_schedules.json";
 import { getFrequencyMin } from "./frequencies";
 
 export type Mode = "walk" | "bus" | "metro";
@@ -10,7 +11,7 @@ export interface RawStop {
 }
 export interface RawBusRoute {
   route: string;
-  bus_number?: string;
+  bus_number?: string | undefined;
   stops: RawStop[];
 }
 export interface RawMetroLine {
@@ -40,6 +41,16 @@ export interface RouteLine {
   name: string;
   /** bus number (e.g. '1', '5', '72B') */
   busNumber?: string | undefined;
+  /** total route duration in minutes from timetable */
+  durationMin?: number | undefined;
+  /** scheduled departure times in minutes from midnight (e.g. 390 = 6:30 AM) */
+  departures?: number[] | undefined;
+  /** total scheduled trips per day */
+  tripsPerDay?: number | undefined;
+  /** average headway between scheduled departures in minutes */
+  headwayMin?: number | undefined;
+  /** time offset in minutes from origin stop for each sequential stop */
+  stopOffsets?: number[] | undefined;
   /** ordered place ids */
   placeIds: string[];
   points: RawStop[];
@@ -65,6 +76,16 @@ export function haversine(aLat: number, aLon: number, bLat: number, bLon: number
   return 2 * EARTH_R * Math.asin(Math.sqrt(s));
 }
 
+export function formatTime(minFromMidnight: number): string {
+  const norm = ((Math.round(minFromMidnight) % 1440) + 1440) % 1440;
+  let h = Math.floor(norm / 60);
+  const m = norm % 60;
+  const ampm = h >= 12 ? "PM" : "AM";
+  if (h > 12) h -= 12;
+  if (h === 0) h = 12;
+  return `${h}:${m < 10 ? "0" : ""}${m} ${ampm}`;
+}
+
 const norm = (s: string) =>
   s
     .toLowerCase()
@@ -75,9 +96,13 @@ const norm = (s: string) =>
 /** Stops within this distance AND with a similar name are treated as the same place. */
 const CLUSTER_M = 120;
 
+const busSchedules: Record<
+  string,
+  { routeName: string; busNumber: string; routeId: string; durationMin: number; departures: number[] }
+> = schedulesData as any;
+
 /**
- * Builds the multimodal network from the dataset. Adding new bus routes, stops or
- * metro lines to network.json requires no change here — everything is derived.
+ * Builds the multimodal network from the dataset with timetable, headway & stop offsets.
  */
 export function buildNetwork(data: RawNetwork = raw as unknown as RawNetwork): TransitNetwork {
   const places = new Map<string, Place>();
@@ -112,20 +137,52 @@ export function buildNetwork(data: RawNetwork = raw as unknown as RawNetwork): T
 
   data.bus.forEach((r, i) => {
     const id = `bus:${i}`;
+    const sched = busSchedules[r.route.toLowerCase().trim()];
+    const durationMin = sched?.durationMin || 45;
+    const departures = sched?.departures || [];
+    const validDeps = departures.filter((d) => d > 0 && d < 1439);
+    const tripsPerDay = validDeps.length;
+
+    let headwayMin = getFrequencyMin(r.route);
+    if (tripsPerDay >= 2) {
+      headwayMin = Math.max(5, Math.round((validDeps[tripsPerDay - 1]! - validDeps[0]!) / (tripsPerDay - 1)));
+    } else if (tripsPerDay === 1) {
+      headwayMin = 120; // single trip daily
+    }
+
+    // Calculate cumulative distance and stop time offsets
+    const cumDist: number[] = [0];
+    for (let sIdx = 1; sIdx < r.stops.length; sIdx++) {
+      const prev = r.stops[sIdx - 1]!;
+      const curr = r.stops[sIdx]!;
+      const d = haversine(prev.lat, prev.lon, curr.lat, curr.lon) * 1.25;
+      cumDist.push(cumDist[cumDist.length - 1]! + d);
+    }
+    const totalDist = cumDist[cumDist.length - 1] || 1;
+    const stopOffsets = cumDist.map((d) =>
+      totalDist > 0 ? Number(((d / totalDist) * durationMin).toFixed(2)) : 0
+    );
+
     const placeIds = r.stops.map((s) => {
       const p = getPlace(s, "bus");
       p.modes.add("bus");
       p.routes.add(id);
       return p.id;
     });
+
     lines.set(id, {
       id,
       mode: "bus",
       name: r.route,
-      busNumber: r.bus_number,
+      busNumber: r.bus_number || sched?.busNumber,
+      durationMin,
+      departures,
+      tripsPerDay,
+      headwayMin,
+      stopOffsets,
       placeIds,
       points: r.stops,
-      frequencyMin: getFrequencyMin(r.route),
+      frequencyMin: headwayMin,
     });
   });
 
@@ -144,7 +201,9 @@ export function buildNetwork(data: RawNetwork = raw as unknown as RawNetwork): T
       name: lineName,
       placeIds,
       points: l.stations,
-      frequencyMin: getFrequencyMin(lineName),
+      tripsPerDay: 160,
+      headwayMin: 6,
+      frequencyMin: 6,
     });
   });
 
