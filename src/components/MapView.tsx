@@ -1,3 +1,4 @@
+import DevBusRouteInspector from "./DevBusRouteInspector";
 import {
   MapContainer,
   TileLayer,
@@ -334,6 +335,7 @@ export default function MapView({
         );
       })}
 
+      <DevBusRouteInspector />
       <ClickHandler onClick={onMapClick} />
       <Fit journey={journey} />
     </MapContainer>

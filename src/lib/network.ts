@@ -10,6 +10,7 @@ export interface RawStop {
 }
 export interface RawBusRoute {
   route: string;
+  bus_number?: string;
   stops: RawStop[];
 }
 export interface RawMetroLine {
@@ -37,6 +38,8 @@ export interface RouteLine {
   mode: "bus" | "metro";
   /** display name: bus route name or metro line name */
   name: string;
+  /** bus number (e.g. '1', '5', '72B') */
+  busNumber?: string | undefined;
   /** ordered place ids */
   placeIds: string[];
   points: RawStop[];
@@ -119,6 +122,7 @@ export function buildNetwork(data: RawNetwork = raw as unknown as RawNetwork): T
       id,
       mode: "bus",
       name: r.route,
+      busNumber: r.bus_number,
       placeIds,
       points: r.stops,
       frequencyMin: getFrequencyMin(r.route),

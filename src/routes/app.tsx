@@ -194,7 +194,11 @@ function JourneyCard({
                 title={hasFreq ? "Click to view departure frequency" : undefined}
               >
                 <ModeIcon mode={leg.mode} line={leg.line} />
-                <span className="max-w-[110px] truncate">{leg.line ?? `${Math.round(leg.timeMin)}m`}</span>
+                <span className="max-w-[120px] truncate">
+                  {leg.mode === "bus" && leg.busNumber
+                    ? `Bus ${leg.busNumber}`
+                    : leg.line ?? `${Math.round(leg.timeMin)}m`}
+                </span>
                 {hasFreq && (
                   <Timer className={`size-2.5 opacity-70 transition-transform ${isOpen ? "rotate-180" : ""}`} />
                 )}
@@ -331,8 +335,13 @@ function Itinerary({
             >
               {/* Row 1: Line Name & Icon (left) + Frequency (right) */}
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <Icon className="size-4" style={{ color: theme.textColor }} />
+                  {leg.mode === "bus" && leg.busNumber && (
+                    <span className="rounded-md bg-teal-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-xs">
+                      BUS {leg.busNumber}
+                    </span>
+                  )}
                   <span className="text-xs font-bold" style={{ color: theme.textColor }}>
                     {leg.line ?? leg.mode}
                   </span>
@@ -535,7 +544,7 @@ interface SavedJourneyItem {
   transfers: number;
   walkDistanceM: number;
   co2g: number;
-  legs: { mode: string; line?: string | undefined; timeMin: number }[];
+  legs: { mode: string; line?: string | undefined; busNumber?: string | undefined; timeMin: number }[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -764,6 +773,7 @@ function Planner() {
         legs: journey.legs.map((l) => ({
           mode: l.mode,
           line: l.line,
+          busNumber: l.busNumber,
           timeMin: l.timeMin,
         })),
       };
@@ -1607,7 +1617,11 @@ function Planner() {
                                   }`}
                                 >
                                   <ModeIcon mode={leg.mode} line={leg.line} className="size-2.5" />
-                                  <span className="max-w-[80px] truncate">{leg.line ?? `${Math.round(leg.timeMin)}m`}</span>
+                                  <span className="max-w-[90px] truncate">
+                                    {leg.mode === "bus" && leg.busNumber
+                                      ? `Bus ${leg.busNumber}`
+                                      : leg.line ?? `${Math.round(leg.timeMin)}m`}
+                                  </span>
                                 </span>
                               );
                             })}
