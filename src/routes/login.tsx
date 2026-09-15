@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Leaf, Phone, CheckCircle2 } from "lucide-react";
-import { useAuth } from "../context/AuthContext";
+import { Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Leaf, Phone, CheckCircle2, Sparkles, KeyRound } from "lucide-react";
+import { useAuth, DEMO_CREDENTIALS } from "../context/AuthContext";
 import { z } from "zod";
 
 const loginSearchSchema = z.object({
@@ -15,7 +15,7 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginComponent() {
-  const { signInWithEmail, signInWithPhone, signInWithGoogle } = useAuth();
+  const { signInWithEmail, signInWithPhone, signInWithGoogle, loginAsDemoUser } = useAuth();
   const navigate = useNavigate();
   const search = Route.useSearch();
 
@@ -26,6 +26,26 @@ function LoginComponent() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const handleFillDemo = () => {
+    setLoginMethod("email");
+    setEmail(DEMO_CREDENTIALS.email);
+    setPassword(DEMO_CREDENTIALS.password);
+    setError("");
+  };
+
+  const handleDirectDemoLogin = () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      loginAsDemoUser();
+      navigate({ to: "/app" });
+    } catch (err: any) {
+      setError("Demo login error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,13 +66,13 @@ function LoginComponent() {
         result = await signInWithPhone(mobile.trim(), password);
       }
 
-      if (result.error) {
+      if (result?.error) {
         throw result.error;
       }
 
       navigate({ to: "/app" });
     } catch (err: any) {
-      setError(err.message || "Login failed. Please check your credentials.");
+      setError(err.message || "Login failed. Please check your credentials or use 1-Click Demo Sign In.");
     } finally {
       setIsLoading(false);
     }
@@ -108,13 +128,58 @@ function LoginComponent() {
             </div>
           )}
 
-          <div className="text-center mb-6">
+          <div className="text-center mb-5">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-400 text-xs font-semibold mb-3">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
               {greeting}
             </div>
             <h2 className="text-2xl font-bold text-foreground">Welcome Back</h2>
             <p className="text-muted-foreground text-sm mt-1">Sign in to your Eco Move account</p>
+          </div>
+
+          {/* ⚡ Demo & Evaluator Bypass Card */}
+          <div className="mb-5 p-3.5 bg-gradient-to-br from-amber-500/15 via-amber-500/5 to-orange-500/10 border border-amber-500/30 rounded-2xl shadow-sm">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-amber-500 animate-pulse" />
+                <span className="font-bold text-xs text-amber-700 dark:text-amber-300 uppercase tracking-wide">
+                  Demo / Testing Account
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleDirectDemoLogin}
+                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-[11px] px-3 py-1 rounded-lg shadow-sm transition active:scale-95 flex items-center gap-1 cursor-pointer"
+                title="Login immediately with demo user without typing"
+              >
+                1-Click Sign In ⚡
+              </button>
+            </div>
+            
+            <div className="bg-background/80 rounded-xl p-2.5 border border-border/80 flex flex-col gap-1 text-[11px]">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Demo ID:</span>
+                <span className="font-mono font-semibold text-foreground bg-muted/70 px-1.5 py-0.5 rounded">
+                  {DEMO_CREDENTIALS.email}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Password:</span>
+                <span className="font-mono font-semibold text-foreground bg-muted/70 px-1.5 py-0.5 rounded">
+                  {DEMO_CREDENTIALS.password}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={handleFillDemo}
+                className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <KeyRound className="h-3 w-3" /> Auto-fill form fields
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -172,7 +237,7 @@ function LoginComponent() {
           </div>
 
           {/* Toggle Login Method */}
-          <div className="grid grid-cols-2 gap-2 bg-muted/60 p-1 rounded-2xl mb-5 border border-border">
+          <div className="grid grid-cols-2 gap-2 bg-muted/60 p-1 rounded-2xl mb-4 border border-border">
             <button
               type="button"
               onClick={() => {
@@ -205,7 +270,7 @@ function LoginComponent() {
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
             {loginMethod === "email" ? (
               <div>
                 <label className="block text-xs font-semibold text-foreground uppercase tracking-wider mb-1.5">
