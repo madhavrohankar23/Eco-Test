@@ -103,21 +103,34 @@ export default function MapView({
   /** Nearby transit stops to show as map markers */
   nearbyMarkers?: NearbyStop[];
 }) {
+    const cartoApiKey = (import.meta.env as Record<string, string | undefined>)["VITE_CARTO_API_KEY"] || "cb1_3m87_1_9a62d04449bdddc8bb5b8466";
+  const cartoTileUrl = cartoApiKey
+    ? `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${cartoApiKey}`
+    : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png";
+
   return (
     <div className="relative h-full w-full" style={{ cursor: (picking || nearbyMode) ? "crosshair" : undefined }}>
     <MapContainer
       center={[21.1458, 79.0882]}
       zoom={13}
+      preferCanvas={true}
       className="h-full w-full"
       scrollWheelZoom
       style={{ background: "#eef2f4" }}
     >
       <TileLayer
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        url={cartoTileUrl}
+        subdomains={["a", "b", "c", "d"]}
+        maxZoom={20}
+      />
+
+      {/* <TileLayer
         attribution='&copy; <a href="https://maps.google.com" target="_blank">Google Maps</a>'
         url="https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
         subdomains={["0", "1", "2", "3"]}
         maxZoom={21}
-      />
+      /> */}
 
             {/* Metro Line Polylines — ONLY shown when Metro toggle is clicked */}
       {showMetroStations &&
