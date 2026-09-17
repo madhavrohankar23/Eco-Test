@@ -7,6 +7,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import PlaceSearch, { type Point } from "@/components/PlaceSearch";
 import { Button } from "@/components/ui/button";
 import {
+  IndianRupee,
   ArrowRight,
   Bookmark,
   BookmarkCheck,
@@ -82,6 +83,7 @@ export const Route = createFileRoute("/app")({
 const PREFS: { id: Preference; label: string; icon: typeof Zap }[] = [
   { id: "balanced", label: "Best", icon: Sparkles },
   { id: "fastest", label: "Fastest", icon: Zap },
+  { id: "cheapest", label: "Cheapest", icon: IndianRupee },
   { id: "least_walk", label: "Least walk", icon: Footprints },
   { id: "fewest_transfers", label: "Few transfers", icon: Repeat },
   { id: "low_co2", label: "Low CO₂", icon: Leaf },
@@ -155,16 +157,20 @@ function JourneyCard({
           )}
         </div>
         <div className="flex flex-col items-end gap-1">
+          <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-extrabold text-emerald-700 dark:text-emerald-300 shadow-2xs">
+            <IndianRupee className="size-3" />
+            {journey.totalFareRs ?? 0}
+          </span>
           {journey.transfers === 0 ? (
-            <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
               Direct
             </span>
           ) : (
-            <span className="rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+            <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
               {journey.transfers} transfer{journey.transfers > 1 ? "s" : ""}
             </span>
           )}
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[10px] text-muted-foreground">
             walk {fmtDist(journey.walkDistanceM)}
           </span>
         </div>
@@ -360,6 +366,12 @@ function Itinerary({
                   <span className="text-xs font-bold" style={{ color: theme.textColor }}>
                     {leg.line ?? leg.mode}
                   </span>
+                  {leg.fareRs !== undefined && (
+                    <span className="flex items-center gap-0.5 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-700 dark:text-emerald-300">
+                      <IndianRupee className="size-2.5" />
+                      {leg.fareRs}
+                    </span>
+                  )}
                 </div>
                 {leg.frequencyRating === "high" ? (
                   <span className="flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700 dark:text-emerald-400">
@@ -571,6 +583,7 @@ const POPULAR_ROUTE_PRESETS: PopularRoutePreset[] = [
 ];
 
 interface SavedJourneyItem {
+  totalFareRs?: number;
   id: string;
   savedAt: number;
   origin: Point;
@@ -1599,8 +1612,9 @@ function Planner() {
 
                       {journey && (
                         <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-                          <div className="mb-4 grid grid-cols-2 gap-2">
+                          <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                             <Stat icon={Clock} label="Total time" value={fmtTime(journey.totalTimeMin)} />
+                            <Stat icon={IndianRupee} label="Total Fare" value={`₹${journey.totalFareRs ?? 0}`} />
                             <Stat icon={RouteIcon} label="Distance" value={fmtDist(journey.totalDistanceM)} />
                             <Stat icon={Footprints} label="Walking" value={fmtDist(journey.walkDistanceM)} />
                             <Stat icon={Repeat} label="Transfers" value={String(journey.transfers)} />

@@ -1,11 +1,12 @@
 import lineGeometriesData from "@/data/lineGeometries.json";
 import { buildNetwork, haversine, formatTime, type Place, type TransitNetwork } from "./network";
 import { walkRoute, clearWalkCache } from "./ors";
+import { getBusFare, getMetroFare, getLegFare } from "./fares";
 
 clearWalkCache();
 
 
-export type Preference = "balanced" | "fastest" | "least_walk" | "fewest_transfers" | "low_co2";
+export type Preference = "balanced" | "fastest" | "cheapest" | "least_walk" | "fewest_transfers" | "low_co2";
 
 /** Average parameters */
 export const PARAMS = {
@@ -22,15 +23,16 @@ export const PARAMS = {
 
 export const PREFERENCE_WEIGHTS: Record<
   Preference,
-  { time: number; walk: number; transfer: number; co2: number; busPenalty: number }
+  { time: number; walk: number; transfer: number; co2: number; busPenalty: number; fare: number }
 > = {
   // cost = time(min)*w.time + walk(km)*w.walk + transfers*w.transfer + co2(kg)*w.co2
-  //        + bus(km)*w.busPenalty   (metro is preferred whenever it is available)
-  balanced: { time: 1, walk: 18, transfer: 5, co2: 3, busPenalty: 2 },
-  fastest: { time: 1, walk: 5, transfer: 1, co2: 0, busPenalty: 1 },
-  least_walk: { time: 0.4, walk: 60, transfer: 2, co2: 0, busPenalty: 1.5 },
-  fewest_transfers: { time: 0.5, walk: 4, transfer: 45, co2: 0, busPenalty: 1.5 },
-  low_co2: { time: 0.4, walk: 2, transfer: 3, co2: 60, busPenalty: 4 },
+  //        + bus(km)*w.busPenalty + fare(Rs)*w.fare   (metro is preferred whenever it is available)
+  balanced: { time: 1, walk: 18, transfer: 5, co2: 3, busPenalty: 2, fare: 0 },
+  fastest: { time: 1, walk: 5, transfer: 1, co2: 0, busPenalty: 1, fare: 0 },
+  cheapest: { time: 0.1, walk: 1.5, transfer: 3, co2: 0, busPenalty: 0, fare: 10 },
+  least_walk: { time: 0.4, walk: 60, transfer: 2, co2: 0, busPenalty: 1.5, fare: 0 },
+  fewest_transfers: { time: 0.5, walk: 4, transfer: 45, co2: 0, busPenalty: 1.5, fare: 0 },
+  low_co2: { time: 0.4, walk: 2, transfer: 3, co2: 60, busPenalty: 4, fare: 0 },
 };
 
 
@@ -49,6 +51,8 @@ export interface Leg {
   distanceM: number;
   timeMin: number;
   co2g: number;
+  fareRs?: number | undefined;
+  fareSource?: string | undefined;
   stops?: string[];
   path: { lat: number; lon: number }[];
   frequencyMin?: number | undefined;
@@ -69,6 +73,8 @@ export interface Journey {
   transfers: number;
   score: number;
   co2g: number;
+  totalFareRs: number;
+  fareBreakdown?: { bus: number; metro: number; walk: number } | undefined;
   signature?: string | undefined;
   departureTimeStr?: string | undefined;
   arrivalTimeStr?: string | undefined;
@@ -82,6 +88,11 @@ interface Metrics {
   busM: number;
   boardings: number;
   co2g: number;
+  fareRs: number;
+  currentLegFareRs?: number | undefined;
+  boardPlaceId?: string | undefined;
+  boardStopIdx?: number | undefined;
+  currentLegDistM?: number | undefined;
 }
 
 interface Edge {
@@ -345,7 +356,8 @@ function cost(m: Metrics, pref: Preference) {
     (m.walkM / 1000) * w.walk +
     transfers * w.transfer +
     (m.co2g / 1000) * w.co2 +
-    (m.busM / 1000) * w.busPenalty
+    (m.busM / 1000) * w.busPenalty +
+    m.fareRs * (w.fare ?? 0)
   );
 }
 
@@ -589,7 +601,23 @@ function search(
   const startKey = makeStateKey(ORIGIN, undefined, 0);
   const best = new Map<string, number>([[startKey, 0]]); // stores g(s)
   const trace = new Map<string, StateTrace>([
-    [startKey, { node: ORIGIN, transfers: 0, m: { timeMin: 0, walkM: 0, transitM: 0, busM: 0, boardings: 0, co2g: 0 } }],
+    [startKey, {
+      node: ORIGIN,
+      transfers: 0,
+      m: {
+        timeMin: 0,
+        walkM: 0,
+        transitM: 0,
+        busM: 0,
+        boardings: 0,
+        co2g: 0,
+        fareRs: 0,
+        currentLegFareRs: 0,
+        boardPlaceId: undefined,
+        boardStopIdx: undefined,
+        currentLegDistM: 0,
+      },
+    }],
   ]);
 
   const heap = new PriorityQueue();
@@ -616,6 +644,12 @@ function search(
       let transferPenalty = 0;
       let edgeTimeMin = e.timeMin;
 
+      let nextBoardPlaceId = curTrace.m.boardPlaceId;
+      let nextBoardStopIdx = curTrace.m.boardStopIdx;
+      let nextCurrentLegDistM = curTrace.m.currentLegDistM ?? 0;
+      let nextCurrentLegFareRs = curTrace.m.currentLegFareRs ?? 0;
+      let nextFareRs = curTrace.m.fareRs;
+
       if (e.kind === "board") {
         nextLineId = e.lineId;
         newBoardings += 1;
@@ -623,39 +657,47 @@ function search(
           transferPenalty = PARAMS.transferPenaltyMin;
         }
 
-        // ── TIME-DEPENDENT TIMETABLE CHECK ──
         const line = net.lines.get(e.lineId!);
+        const stopIdxMatch = e.to.match(/:(\d+)$/);
+        const stopIdx = stopIdxMatch ? parseInt(stopIdxMatch[1]!, 10) : 0;
+        const boardPid = curTrace.node.startsWith("P:") ? curTrace.node.slice(2) : "";
+
+        let initLegFare = 12;
+        if (line && line.mode === "metro") {
+          initLegFare = getMetroFare(1);
+        } else if (line && line.mode === "bus") {
+          initLegFare = getBusFare(line.busNumber ?? "", "", "", 0).fare;
+        }
+
+        nextBoardPlaceId = boardPid;
+        nextBoardStopIdx = stopIdx;
+        nextCurrentLegDistM = 0;
+        nextCurrentLegFareRs = initLegFare;
+        nextFareRs = curTrace.m.fareRs + initLegFare;
+
+        // ── TIME-DEPENDENT TIMETABLE CHECK ──
         if (line) {
           const now = new Date();
           const depMin = departureTimeMin != null ? departureTimeMin : (now.getHours() * 60 + now.getMinutes());
           const arrivalAtStopMin = depMin + curTrace.m.timeMin;
 
           if (line.mode === "bus") {
-            const stopIdxMatch = e.to.match(/:(\d+)$/);
-            const stopIdx = stopIdxMatch ? parseInt(stopIdxMatch[1]!, 10) : 0;
             const offset = (line.stopOffsets && line.stopOffsets[stopIdx] != null) ? line.stopOffsets[stopIdx]! : 0;
             const departures = line.departures || [];
-
-            // Filter out 0 and 1439 dummy entries
             const validDepartures = departures.filter((d) => d > 0 && d < 1439);
 
             if (validDepartures.length > 0) {
               const stopDepartures = validDepartures.map((d) => d + offset);
               const nextDep = stopDepartures.find((d) => d >= arrivalAtStopMin);
               if (nextDep == null) {
-                // No more buses scheduled today after this hour
                 continue;
               }
               const waitMin = nextDep - arrivalAtStopMin;
               if (waitMin > 90) {
-                // Next bus is more than 1.5 hours away
                 continue;
               }
               const trips = line.tripsPerDay || 1;
               const headway = line.headwayMin || line.frequencyMin || 30;
-              // Strong frequency optimization:
-              // Buses running >=20 trips/day get minimal +1m headway cost.
-              // Buses running <5 trips/day get up to +15m penalty so frequent lines are heavily prioritized!
               let headwayPenalty = 2;
               if (trips >= 25) {
                 headwayPenalty = 1;
@@ -669,7 +711,6 @@ function search(
 
               edgeTimeMin = Math.max(1, waitMin) + headwayPenalty;
             } else {
-              // If no timetable, enforce operating hours 06:00 to 22:30
               if (arrivalAtStopMin < 360 || arrivalAtStopMin > 1350) {
                 continue;
               }
@@ -678,21 +719,48 @@ function search(
               edgeTimeMin = PARAMS.busWaitMin + headwayPenalty;
             }
           } else if (line.mode === "metro") {
-            // Nagpur Metro operates 06:00 AM (360) to 10:30 PM (1350)
             if (arrivalAtStopMin < 360 || arrivalAtStopMin > 1350) {
               continue;
             }
-            // Metro is ultra-frequent (every 6 min) -> 0 headway penalty
             edgeTimeMin = PARAMS.metroWaitMin;
           }
         }
       } else if (e.kind === "ride") {
         nextLineId = e.lineId ?? cur.lineId;
+        const line = net.lines.get(nextLineId!);
+        const stopIdxMatch = e.to.match(/:(\d+)$/);
+        const curStopIdx = stopIdxMatch ? parseInt(stopIdxMatch[1]!, 10) : 0;
+
+        nextCurrentLegDistM = (curTrace.m.currentLegDistM ?? 0) + e.distanceM;
+        let updatedLegFare = curTrace.m.currentLegFareRs ?? 0;
+
+        if (line && line.mode === "metro") {
+          const stationCount = Math.max(1, Math.abs(curStopIdx - (curTrace.m.boardStopIdx ?? 0)));
+          updatedLegFare = getMetroFare(stationCount);
+        } else if (line && line.mode === "bus") {
+          const boardName = net.places.get(curTrace.m.boardPlaceId ?? "")?.name ?? "";
+          const curPlaceName = net.places.get(e.toPlace ?? "")?.name ?? "";
+          updatedLegFare = getBusFare(line.busNumber ?? "", boardName, curPlaceName, nextCurrentLegDistM).fare;
+        }
+
+        const fareDelta = updatedLegFare - (curTrace.m.currentLegFareRs ?? 0);
+        nextCurrentLegFareRs = updatedLegFare;
+        nextFareRs = curTrace.m.fareRs + Math.max(0, fareDelta);
       } else if (e.kind === "alight") {
         nextLineId = undefined;
+        nextBoardPlaceId = undefined;
+        nextBoardStopIdx = undefined;
+        nextCurrentLegDistM = 0;
+        nextCurrentLegFareRs = 0;
+        nextFareRs = curTrace.m.fareRs;
       } else {
         // walk
         nextLineId = undefined;
+        nextBoardPlaceId = undefined;
+        nextBoardStopIdx = undefined;
+        nextCurrentLegDistM = 0;
+        nextCurrentLegFareRs = 0;
+        nextFareRs = curTrace.m.fareRs;
       }
 
       const nextTransfers = Math.max(0, newBoardings - 1);
@@ -705,6 +773,11 @@ function search(
         busM: curTrace.m.busM + (e.kind === "ride" && e.mode === "bus" ? e.distanceM : 0),
         boardings: newBoardings,
         co2g: curTrace.m.co2g + e.co2g,
+        fareRs: nextFareRs,
+        currentLegFareRs: nextCurrentLegFareRs,
+        boardPlaceId: nextBoardPlaceId,
+        boardStopIdx: nextBoardStopIdx,
+        currentLegDistM: nextCurrentLegDistM,
       };
 
       if (m.walkM > 4000) continue;
@@ -880,6 +953,8 @@ function toJourney(
         distanceM: e.distanceM,
         timeMin: e.timeMin,
         co2g: 0,
+        fareRs: 0,
+        fareSource: "free_walk",
         path: [fromP ? pt(fromP) : origin, toP ? pt(toP) : destination],
       });
       i++;
@@ -920,6 +995,15 @@ function toJourney(
         const fullGeom = getLineFullGeometry(line.mode, line.name, line.points);
         const realisticPath = sliceRouteGeometry(fullGeom, boardPt, lastPt, stopPoints.slice(1, -1));
 
+        const fareResult = getLegFare({
+          mode: line.mode,
+          busNumber: line.busNumber,
+          from: boardPlace,
+          to: lastPlace,
+          distanceM: dist,
+          stops,
+        });
+
         legs.push({
           mode: line.mode,
           line: line.name,
@@ -929,6 +1013,8 @@ function toJourney(
           distanceM: dist,
           timeMin: time,
           co2g: co2,
+          fareRs: fareResult.fare,
+          fareSource: fareResult.source,
           stops,
           path: realisticPath,
           frequencyMin: line.frequencyMin,
@@ -961,6 +1047,13 @@ function toJourney(
   const transitDistanceM = transitLegs.reduce((s, l) => s + l.distanceM, 0);
   const totalTimeMin = merged.reduce((s, l) => s + l.timeMin, 0);
 
+  const totalFareRs = merged.reduce((s, l) => s + (l.fareRs ?? 0), 0);
+  const fareBreakdown = {
+    bus: merged.filter((l) => l.mode === "bus").reduce((s, l) => s + (l.fareRs ?? 0), 0),
+    metro: merged.filter((l) => l.mode === "metro").reduce((s, l) => s + (l.fareRs ?? 0), 0),
+    walk: 0,
+  };
+
   return {
     legs: merged,
     totalDistanceM,
@@ -969,6 +1062,8 @@ function toJourney(
     walkDistanceM,
     transfers: Math.max(0, transitLegs.length - 1),
     co2g: merged.reduce((s, l) => s + l.co2g, 0),
+    totalFareRs,
+    fareBreakdown,
     score: res.score,
   };
 }
@@ -980,19 +1075,31 @@ function toJourney(
  * A dominates B if A is at least as good as B in ALL metrics and strictly better in AT LEAST ONE.
  */
 function dominates(a: Journey, b: Journey): boolean {
+  const aFare = a.totalFareRs ?? 0;
+  const bFare = b.totalFareRs ?? 0;
+
   // At least as good (within tiny tolerance for floating point)
   const timeLe = a.totalTimeMin <= b.totalTimeMin + 0.5;
   const walkLe = a.walkDistanceM <= b.walkDistanceM + 25;
   const transLe = a.transfers <= b.transfers;
   const co2Le = a.co2g <= b.co2g + 5;
+  const fareLe = aFare <= bFare;
 
   // Strictly better in at least one metric
   const timeLt = a.totalTimeMin < b.totalTimeMin - 0.5;
   const walkLt = a.walkDistanceM < b.walkDistanceM - 25;
   const transLt = a.transfers < b.transfers;
   const co2Lt = a.co2g < b.co2g - 5;
+  const fareLt = aFare < bFare;
 
-  return timeLe && walkLe && transLe && co2Le && (timeLt || walkLt || transLt || co2Lt);
+  return (
+    timeLe &&
+    walkLe &&
+    transLe &&
+    co2Le &&
+    fareLe &&
+    (timeLt || walkLt || transLt || co2Lt || fareLt)
+  );
 }
 
 /**
@@ -1171,7 +1278,7 @@ export async function planJourney(
   const seenSignatures = new Set<string>([signature(best)]);
 
   // Generate candidates across all 5 Pareto objective profiles
-  const allPrefs: Preference[] = ["balanced", "fastest", "least_walk", "fewest_transfers", "low_co2"];
+  const allPrefs: Preference[] = ["balanced", "fastest", "cheapest", "least_walk", "fewest_transfers", "low_co2"];
   for (const p of allPrefs) {
     if (p === preference) continue;
     const res = search(origin, destination, p, undefined, accessEdges, egressEdges, directWalkEdge, depMin);
@@ -1212,7 +1319,12 @@ export async function planJourney(
   // Sort remaining Pareto alternatives by their score under the current preference
   const remainingPareto = paretoFrontier
     .filter((j) => !finalSeen.has(signature(j)))
-    .sort((a, b) => a.score - b.score);
+    .sort((a, b) => {
+      if (preference === "cheapest") {
+        return (a.totalFareRs ?? 0) - (b.totalFareRs ?? 0) || a.score - b.score;
+      }
+      return a.score - b.score;
+    });
 
   for (const j of remainingPareto) {
     const sig = signature(j);
@@ -1337,5 +1449,7 @@ export async function enrichWalkLegs(
     transitDistanceM,
     totalTimeMin: enriched.reduce((s, l) => s + l.timeMin, 0),
     walkDistanceM,
+    totalFareRs: journey.totalFareRs,
+    fareBreakdown: journey.fareBreakdown,
   };
 }
