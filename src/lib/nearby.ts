@@ -69,7 +69,7 @@ export function findNearby(
     const parentLine = allLines.find(
       (l) =>
         l.mode === "metro" &&
-        l.points.some((p) => Math.abs(p.lat - s.lat) < 0.0005 && Math.abs(p.lon - s.lon) < 0.0005),
+        l.points.some((p: { lat: number; lon: number }) => Math.abs(p.lat - s.lat) < 0.0005 && Math.abs(p.lon - s.lon) < 0.0005),
     );
     const lineName = parentLine?.name;
     return {
