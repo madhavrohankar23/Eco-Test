@@ -1,8 +1,7 @@
 /**
  * OpenRouteService (ORS) API client - foot-walking profile, shortest path.
- *
- * Free tier: 2,000 requests/day, 40 requests/minute.
- * Includes rate-limit protection, persistent caching, and silent graceful fallback.
+ * Includes OpenStreetMap foot router fallback when ORS quota is exceeded,
+ * rate-limit protection, persistent caching, and seamless street-following geometry.
  */
 
 export interface WalkRouteResult {
@@ -19,8 +18,8 @@ const ORS_BASE = "https://api.openrouteservice.org/v2/directions/foot-walking/ge
 /** In-memory cache: key = "lon1,lat1|lon2,lat2" */
 const memoryCache = new Map<string, WalkRouteResult>();
 
-/** Rate limit cooldown timestamp (ms) - stops spamming if 429 received */
-let rateLimitCooldownUntil = 0;
+/** Rate limit cooldown timestamp (ms) - stops spamming if 429/403 received */
+let orsDisabledUntil = 0;
 
 function cacheKey(
   from: { lat: number; lon: number },
@@ -48,17 +47,60 @@ function setPersistentCache(key: string, result: WalkRouteResult) {
 }
 
 /**
- * Fetch the shortest pedestrian route from ORS (POST /geojson).
- * Returns null if the API is unavailable or quota is exceeded -
- * callers automatically fall back to the straight-line estimate.
+ * Fallback pedestrian routing using OpenStreetMap routed-foot service.
+ * Free, requires no API key, and follows real pedestrian street paths in Nagpur.
+ */
+async function fetchOsmFootRoute(
+  from: { lat: number; lon: number },
+  to: { lat: number; lon: number },
+): Promise<WalkRouteResult | null> {
+  const urls = [
+    `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${from.lon.toFixed(6)},${from.lat.toFixed(6)};${to.lon.toFixed(6)},${to.lat.toFixed(6)}?overview=full&geometries=geojson`,
+    `https://router.project-osrm.org/route/v1/foot/${from.lon.toFixed(6)},${from.lat.toFixed(6)};${to.lon.toFixed(6)},${to.lat.toFixed(6)}?overview=full&geometries=geojson`,
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": "EcoMoveNagpur/1.0" },
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const route = data?.routes?.[0];
+      if (!route || !route.geometry?.coordinates) continue;
+
+      const coords: [number, number][] = route.geometry.coordinates;
+      if (!coords || coords.length < 2) continue;
+
+      return {
+        distanceM: route.distance,
+        timeMin: route.duration / 60,
+        path: coords.map(([lon, lat]) => ({ lat, lon })),
+      };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch the shortest pedestrian route from ORS or OSM Foot Router.
+ * Returns street-following polyline coordinates with multi-tier fallback.
  */
 export async function walkRoute(
   from: { lat: number; lon: number },
   to: { lat: number; lon: number },
 ): Promise<WalkRouteResult | null> {
-  // Skip trivially short legs (< 30 m) - straight line is fine
+  // Skip trivially short legs (< 15 m)
   const dx = Math.abs(from.lat - to.lat) + Math.abs(from.lon - to.lon);
-  if (dx < 0.0003) return null;
+  if (dx < 0.00015) {
+    return {
+      distanceM: 15,
+      timeMin: 0.2,
+      path: [{ lat: from.lat, lon: from.lon }, { lat: to.lat, lon: to.lon }],
+    };
+  }
 
   const key = cacheKey(from, to);
   
@@ -73,76 +115,78 @@ export async function walkRoute(
     return cachedLocal;
   }
 
-  // 3. If currently in 429 rate limit cooldown, quietly return null to use fallback
-  if (Date.now() < rateLimitCooldownUntil) {
-    return null;
-  }
+  // 3. Try ORS if not in quota cooldown
+  if (Date.now() >= orsDisabledUntil) {
+    const envMeta = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env as Record<string, string | undefined>) : undefined;
+    const envProc = (typeof process !== "undefined" && process.env) ? (process.env as Record<string, string | undefined>) : undefined;
+    const apiKey =
+      envMeta?.["VITE_ORS_API_KEY"] ||
+      envProc?.["VITE_ORS_API_KEY"] ||
+      "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU4ODhiYjRlNWFkODQzNjFiYTJkY2NkZDMxM2I3YzRjIiwiaCI6Im11cm11cjY0In0=";
 
-  const apiKey =
-    (typeof import.meta !== "undefined" && (import.meta as any).env?.["VITE_ORS_API_KEY"]) ||
-    (typeof process !== "undefined" && process.env?.["VITE_ORS_API_KEY"]) ||
-    undefined;
+    if (apiKey && apiKey !== "your_ors_api_key_here") {
+      const body = {
+        coordinates: [
+          [from.lon, from.lat],
+          [to.lon, to.lat],
+        ],
+        preference: "shortest",
+        geometry_simplify: false,
+        instructions: false,
+      };
 
-  if (!apiKey || apiKey === "your_ors_api_key_here") {
-    return null;
-  }
+      try {
+        const res = await fetch(ORS_BASE, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: apiKey,
+          },
+          body: JSON.stringify(body),
+        });
 
-  const body = {
-    coordinates: [
-      [from.lon, from.lat],
-      [to.lon, to.lat],
-    ],
-    preference: "shortest",
-    geometry_simplify: false,
-    instructions: false,
-  };
+        if (res.status === 429 || res.status === 403) {
+          // Quota exceeded or rate limited - disable ORS for 10 minutes and use OSM
+          orsDisabledUntil = Date.now() + 600000;
+        } else if (res.ok) {
+          const data = (await res.json()) as {
+            features: Array<{
+              geometry: { coordinates: [number, number][] };
+              properties: { summary: { distance: number; duration: number } };
+            }>;
+          };
 
-  try {
-    const res = await fetch(ORS_BASE, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: apiKey,
-      },
-      body: JSON.stringify(body),
-    });
+          const feature = data.features?.[0];
+          if (feature) {
+            const { distance, duration } = feature.properties.summary;
+            const coords = feature.geometry.coordinates;
 
-    if (res.status === 429) {
-      // Back off for 45 seconds on rate limit to protect API quota
-      rateLimitCooldownUntil = Date.now() + 45000;
-      console.info("[ORS] Rate limit hit (40 req/min). Temporarily using local road fallback for next 45s.");
-      return null;
+            const result: WalkRouteResult = {
+              distanceM: distance,
+              timeMin: duration / 60,
+              path: coords.map(([lon, lat]) => ({ lat, lon })),
+            };
+
+            memoryCache.set(key, result);
+            setPersistentCache(key, result);
+            return result;
+          }
+        }
+      } catch {
+        // Network error, proceed to fallback
+      }
     }
-
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = (await res.json()) as {
-      features: Array<{
-        geometry: { coordinates: [number, number][] };
-        properties: { summary: { distance: number; duration: number } };
-      }>;
-    };
-
-    const feature = data.features?.[0];
-    if (!feature) return null;
-
-    const { distance, duration } = feature.properties.summary;
-    const coords = feature.geometry.coordinates; // [lon, lat] pairs
-
-    const result: WalkRouteResult = {
-      distanceM: distance,
-      timeMin: duration / 60,
-      path: coords.map(([lon, lat]) => ({ lat, lon })),
-    };
-
-    memoryCache.set(key, result);
-    setPersistentCache(key, result);
-    return result;
-  } catch (err) {
-    return null;
   }
+
+  // 4. Secondary Fallback: OpenStreetMap Foot Router
+  const osmResult = await fetchOsmFootRoute(from, to);
+  if (osmResult) {
+    memoryCache.set(key, osmResult);
+    setPersistentCache(key, osmResult);
+    return osmResult;
+  }
+
+  return null;
 }
 
 /**

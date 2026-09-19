@@ -44,7 +44,7 @@ function Fit({ journey }: { journey: Journey | null }) {
   const map = useMap();
   useEffect(() => {
     if (!journey) return;
-    const pts = journey.legs.flatMap((l) => l.path.map((p) => [p.lat, p.lon] as [number, number]));
+    const pts = journey.legs.flatMap((l) => l.path.map((p: { lat: number; lon: number }) => [p.lat, p.lon] as [number, number]));
     if (pts.length > 1) map.fitBounds(pts, { padding: [40, 40] });
   }, [journey, map]);
   return null;
@@ -142,7 +142,7 @@ export default function MapView({
           .map((l) => (
             <Polyline
               key={l.id}
-              positions={(l.geometry ?? l.points).map((p) => [p.lat, p.lon] as [number, number])}
+              positions={(l.geometry ?? l.points).map((p: { lat: number; lon: number }) => [p.lat, p.lon] as [number, number])}
               pathOptions={{
                 color: lineColor(l.mode, l.name),
                 weight: 4.5,
@@ -160,7 +160,7 @@ export default function MapView({
           .map((l) => (
             <Polyline
               key={l.id}
-              positions={(l.geometry ?? l.points).map((p) => [p.lat, p.lon] as [number, number])}
+              positions={(l.geometry ?? l.points).map((p: { lat: number; lon: number }) => [p.lat, p.lon] as [number, number])}
               pathOptions={{
                 color: lineColor(l.mode, l.name),
                 weight: 2,
@@ -194,7 +194,7 @@ export default function MapView({
         metroStations.map((s) => {
           // Determine which metro line this station belongs to
           const parentLine = allLines.find(
-            (l) => l.mode === "metro" && l.points.some((p) => p.lat === s.lat && p.lon === s.lon),
+            (l) => l.mode === "metro" && l.points.some((p: { lat: number; lon: number }) => p.lat === s.lat && p.lon === s.lon),
           );
           const color = parentLine ? (METRO_LINE_COLOR[parentLine.name] ?? MODE_COLOR["metro"] ?? "#e07a1f") : MODE_COLOR["metro"] ?? "#e07a1f";
           return (
@@ -218,7 +218,7 @@ export default function MapView({
       {journey?.legs.map((leg, i) => (
         <Polyline
           key={i}
-          positions={leg.path.map((p) => [p.lat, p.lon] as [number, number])}
+          positions={leg.path.map((p: { lat: number; lon: number }) => [p.lat, p.lon] as [number, number])}
           pathOptions={{
             color: leg.mode === "metro" ? (lineColor("metro", leg.line ?? "")) : MODE_COLOR[leg.mode],
             weight: leg.mode === "walk" ? 4 : 6,

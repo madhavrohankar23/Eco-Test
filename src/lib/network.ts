@@ -1,4 +1,4 @@
-import raw from "@/data/network.json";
+﻿import raw from "@/data/network.json";
 import schedulesData from "@/data/bus_schedules.json";
 import { getFrequencyMin } from "./frequencies";
 
@@ -195,15 +195,41 @@ export function buildNetwork(data: RawNetwork = raw as unknown as RawNetwork): T
       p.routes.add(id);
       return p.id;
     });
+
+    // Calculate cumulative distance and stop time offsets for Metro
+    const cumDist: number[] = [0];
+    for (let sIdx = 1; sIdx < l.stations.length; sIdx++) {
+      const prev = l.stations[sIdx - 1]!;
+      const curr = l.stations[sIdx]!;
+      const d = haversine(prev.lat, prev.lon, curr.lat, curr.lon);
+      cumDist.push(cumDist[cumDist.length - 1]! + d);
+    }
+    const totalDist = cumDist[cumDist.length - 1] || 1;
+    const isBlue = l.line.toLowerCase().includes("blue") || l.line.toLowerCase().includes("line 2") || l.line.toLowerCase().includes("aqua");
+    const durationMin = isBlue ? 36 : 38;
+    const stopOffsets = cumDist.map((d) =>
+      totalDist > 0 ? Number(((d / totalDist) * durationMin).toFixed(2)) : 0
+    );
+
+    // Official Maha Metro operating schedule: 06:00 AM (360 min) to 10:30 PM (1350 min) every 10 min
+    const headwayMin = 10;
+    const departures: number[] = [];
+    for (let t = 360; t <= 1350; t += headwayMin) {
+      departures.push(t);
+    }
+
     lines.set(id, {
       id,
       mode: "metro",
       name: lineName,
       placeIds,
       points: l.stations,
-      tripsPerDay: 160,
-      headwayMin: 6,
-      frequencyMin: 6,
+      durationMin,
+      departures,
+      tripsPerDay: departures.length,
+      headwayMin,
+      stopOffsets,
+      frequencyMin: headwayMin,
     });
   });
 

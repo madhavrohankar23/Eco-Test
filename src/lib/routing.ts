@@ -1,9 +1,8 @@
 import lineGeometriesData from "@/data/lineGeometries.json";
 import { buildNetwork, haversine, formatTime, type Place, type TransitNetwork } from "./network";
 import { walkRoute, clearWalkCache } from "./ors";
-import { getBusFare, getMetroFare, getLegFare } from "./fares";
+import { getBusFare, getMetroFare, getMetroFareResult, getLegFare } from "./fares";
 
-clearWalkCache();
 
 
 export type Preference = "balanced" | "fastest" | "cheapest" | "least_walk" | "fewest_transfers" | "low_co2";
@@ -18,7 +17,18 @@ export const PARAMS = {
   transferPenaltyMin: 6,
   maxAccessWalkM: 1500,
   maxTransferWalkM: 700,
+  maxTotalWalkM: 4000,
+  maxTransfers: 3,
+  directWalkThresholdM: 700,
+  maxAccessCandidates: 8,
+  transferWalkMultiplier: 1.25,
   co2PerKm: { walk: 0, bus: 68, metro: 22 },
+  transferBuffers: {
+    busToBus: 2,       // 2 min buffer to alight, walk stop & board next bus
+    busToMetro: 3,     // 3 min buffer for street-to-concourse, security & platform
+    metroToBus: 3,     // 3 min buffer for platform-to-street exit & walk to bus stop
+    metroToMetro: 2,   // 2 min buffer for interchange platform transfer at Sitabuldi
+  },
 };
 
 export const PREFERENCE_WEIGHTS: Record<
@@ -61,7 +71,9 @@ export interface Leg {
   departureTimeStr?: string | undefined;
   arrivalTimeStr?: string | undefined;
   waitMin?: number | undefined;
+  scheduledDepartureMin?: number | undefined;
   nextDepartures?: string[] | undefined;
+  orsResolved?: boolean | undefined;
 }
 
 export interface Journey {
@@ -98,18 +110,135 @@ interface Metrics {
 interface Edge {
   to: string;
   kind: "walk" | "board" | "alight" | "ride";
-  mode?: "bus" | "metro";
-  lineId?: string;
-  fromPlace?: string;
-  toPlace?: string;
+  mode?: "bus" | "metro" | undefined;
+  lineId?: string | undefined;
+  fromPlace?: string | undefined;
+  toPlace?: string | undefined;
   distanceM: number;
   timeMin: number;
   co2g: number;
-  orsResolved?: boolean;
+  orsResolved?: boolean | undefined;
+  path?: { lat: number; lon: number }[] | undefined;
+  scheduledDepartureMin?: number | undefined;
+  waitMin?: number | undefined;
 }
 
 const net: TransitNetwork = buildNetwork();
 export const network = net;
+export { net };
+
+export function computePolylineDistanceM(points: { lat: number; lon: number }[]): number {
+  if (!points || points.length < 2) return 0;
+  let d = 0;
+  for (let i = 1; i < points.length; i++) {
+    d += haversine(points[i - 1]!.lat, points[i - 1]!.lon, points[i]!.lat, points[i]!.lon);
+  }
+  return d;
+}
+
+export function calculateTransitLegFare(params: {
+  mode: "bus" | "metro" | "walk";
+  busNumber?: string | undefined;
+  from: string;
+  to: string;
+  stationCount?: number | undefined;
+  distanceM?: number | undefined;
+  stops?: string[] | undefined;
+}): { fare: number; source: string } {
+  const { mode, busNumber, from, to, distanceM = 0, stops } = params;
+  const stationCount = params.stationCount ?? Math.max(1, (stops?.length ?? 2) - 1);
+
+  if (mode === "metro") {
+    const res = getMetroFareResult(from, to, stationCount);
+    return { fare: res.fare, source: res.source };
+  }
+
+  if (mode === "walk") {
+    return { fare: 0, source: "free_walk" };
+  }
+
+  const busFareResult = getBusFare(busNumber || "", from, to, distanceM);
+  if (busFareResult.source !== "distance_slab_fallback") {
+    return busFareResult;
+  }
+
+  const legRes = getLegFare({
+    mode: "bus",
+    busNumber,
+    from,
+    to,
+    stationCount,
+    distanceM,
+    stops,
+  });
+
+  return { fare: legRes.fare, source: legRes.source };
+}
+
+export function validateJourneyMetrics(journey: Journey, tolerance = 0.05): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  const sumTime = journey.legs.reduce((s, l) => s + l.timeMin, 0);
+  if (Math.abs(sumTime - journey.totalTimeMin) > tolerance) {
+    errors.push(`Total time mismatch: legs sum ${sumTime.toFixed(2)}m vs total ${journey.totalTimeMin.toFixed(2)}m`);
+  }
+
+  const sumWalk = journey.legs.filter((l) => l.mode === "walk").reduce((s, l) => s + l.distanceM, 0);
+  if (Math.abs(sumWalk - journey.walkDistanceM) > 1.0) {
+    errors.push(`Walk distance mismatch: legs sum ${sumWalk.toFixed(1)}m vs total ${journey.walkDistanceM.toFixed(1)}m`);
+  }
+
+  const sumTransit = journey.legs.filter((l) => l.mode !== "walk").reduce((s, l) => s + l.distanceM, 0);
+  if (Math.abs(sumTransit - journey.transitDistanceM) > 1.0) {
+    errors.push(`Transit distance mismatch: legs sum ${sumTransit.toFixed(1)}m vs total ${journey.transitDistanceM.toFixed(1)}m`);
+  }
+
+  if (Math.abs((journey.walkDistanceM + journey.transitDistanceM) - journey.totalDistanceM) > 1.0) {
+    errors.push(`Total distance mismatch: walk + transit ${(journey.walkDistanceM + journey.transitDistanceM).toFixed(1)}m vs total ${journey.totalDistanceM.toFixed(1)}m`);
+  }
+
+  const sumCO2 = journey.legs.reduce((s, l) => s + l.co2g, 0);
+  if (Math.abs(sumCO2 - journey.co2g) > 1.0) {
+    errors.push(`CO2 mismatch: legs sum ${sumCO2.toFixed(1)}g vs total ${journey.co2g.toFixed(1)}g`);
+  }
+
+  const sumFare = journey.legs.reduce((s, l) => s + (l.fareRs ?? 0), 0);
+  if (Math.abs(sumFare - journey.totalFareRs) > 0.01) {
+    errors.push(`Fare mismatch: legs sum Rs ${sumFare} vs total Rs ${journey.totalFareRs}`);
+  }
+
+  let expectedTransfers = 0;
+  let prevTransitService: string | undefined;
+  for (const leg of journey.legs) {
+    if (leg.mode !== "walk") {
+      const currentService = leg.line ?? leg.busNumber ?? leg.mode;
+      if (prevTransitService !== undefined && prevTransitService !== currentService) {
+        expectedTransfers++;
+      }
+      prevTransitService = currentService;
+    }
+  }
+
+  if (journey.transfers !== expectedTransfers) {
+    errors.push(`Transfers mismatch: calculated ${expectedTransfers} vs journey.transfers ${journey.transfers}`);
+  }
+
+  if (journey.walkDistanceM > PARAMS.maxTotalWalkM) {
+    errors.push(`Walk constraint violated: ${journey.walkDistanceM.toFixed(0)}m > max ${PARAMS.maxTotalWalkM}m`);
+  }
+
+  if (journey.transfers > PARAMS.maxTransfers) {
+    errors.push(`Transfer constraint violated: ${journey.transfers} > max ${PARAMS.maxTransfers}`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+export const validateJourney = validateJourneyMetrics;
+
 
 const placeNode = (id: string) => `P:${id}`;
 const rideNode = (lineId: string, idx: number) => `R:${lineId}:${idx}`;
@@ -346,6 +475,18 @@ export function nearestPlaces(
   return placeSpatialIndex
     .queryRadius(point, radiusM, limit)
     .map(({ item, distanceM }) => ({ place: item, d: distanceM }));
+}
+
+export function calculateJourneyScore(j: Journey, pref: Preference): number {
+  const w = PREFERENCE_WEIGHTS[pref];
+  return (
+    j.totalTimeMin * w.time +
+    (j.walkDistanceM / 1000) * w.walk +
+    j.transfers * w.transfer +
+    (j.co2g / 1000) * w.co2 +
+    (j.transitDistanceM / 1000) * w.busPenalty +
+    j.totalFareRs * (w.fare ?? 0)
+  );
 }
 
 function cost(m: Metrics, pref: Preference) {
@@ -643,6 +784,8 @@ function search(
       let newBoardings = curTrace.m.boardings;
       let transferPenalty = 0;
       let edgeTimeMin = e.timeMin;
+      let edgeScheduledDepMin: number | undefined;
+      let edgeWaitMin: number | undefined;
 
       let nextBoardPlaceId = curTrace.m.boardPlaceId;
       let nextBoardStopIdx = curTrace.m.boardStopIdx;
@@ -710,6 +853,8 @@ function search(
               }
 
               edgeTimeMin = Math.max(1, waitMin) + headwayPenalty;
+              edgeScheduledDepMin = nextDep;
+              edgeWaitMin = waitMin;
             } else {
               if (arrivalAtStopMin < 360 || arrivalAtStopMin > 1350) {
                 continue;
@@ -717,12 +862,16 @@ function search(
               const trips = line.tripsPerDay || 1;
               const headwayPenalty = trips >= 15 ? 2 : 10;
               edgeTimeMin = PARAMS.busWaitMin + headwayPenalty;
+              edgeScheduledDepMin = arrivalAtStopMin + PARAMS.busWaitMin;
+              edgeWaitMin = PARAMS.busWaitMin;
             }
           } else if (line.mode === "metro") {
             if (arrivalAtStopMin < 360 || arrivalAtStopMin > 1350) {
               continue;
             }
             edgeTimeMin = PARAMS.metroWaitMin;
+            edgeScheduledDepMin = arrivalAtStopMin + PARAMS.metroWaitMin;
+            edgeWaitMin = PARAMS.metroWaitMin;
           }
         }
       } else if (e.kind === "ride") {
@@ -788,12 +937,18 @@ function search(
       const gCost = cost(m, pref);
       if (gCost < (best.get(nextKey) ?? Infinity)) {
         best.set(nextKey, gCost);
+        const edgeCopy: Edge = {
+          ...e,
+          timeMin: edgeTimeMin,
+          scheduledDepartureMin: edgeScheduledDepMin,
+          waitMin: edgeWaitMin,
+        };
         trace.set(nextKey, {
           prevStateKey: cur.key,
           node: e.to,
           lineId: nextLineId,
           transfers: nextTransfers,
-          edge: e,
+          edge: edgeCopy,
           m,
         });
 
@@ -1004,6 +1159,8 @@ function toJourney(
           stops,
         });
 
+        const waitDuration = e.waitMin ?? 0;
+        const totalLegTime = time + waitDuration;
         legs.push({
           mode: line.mode,
           line: line.name,
@@ -1011,13 +1168,17 @@ function toJourney(
           from: boardPlace,
           to: lastPlace,
           distanceM: dist,
-          timeMin: time,
+          timeMin: totalLegTime,
           co2g: co2,
           fareRs: fareResult.fare,
           fareSource: fareResult.source,
           stops,
           path: realisticPath,
           frequencyMin: line.frequencyMin,
+          tripsPerDay: line.tripsPerDay,
+          frequencyRating: line.frequencyMin && line.frequencyMin <= 15 ? "high" : (line.frequencyMin && line.frequencyMin <= 30 ? "medium" : "low"),
+          waitMin: waitDuration,
+          scheduledDepartureMin: e.scheduledDepartureMin,
         });
       }
       i = j;
@@ -1054,17 +1215,54 @@ function toJourney(
     walk: 0,
   };
 
+  const startDepMin = departureTimeMin != null ? departureTimeMin : (() => {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  })();
+
+  let legClockMin = startDepMin;
+  for (const leg of merged) {
+    if (leg.mode === "walk") {
+      leg.departureTimeStr = formatTime(legClockMin);
+      legClockMin += leg.timeMin;
+      leg.arrivalTimeStr = formatTime(legClockMin);
+    } else {
+      const wait = leg.waitMin ?? 0;
+      const vehicleDepMin = leg.scheduledDepartureMin != null ? leg.scheduledDepartureMin : (legClockMin + wait);
+      const rideTime = Math.max(0.5, leg.timeMin - wait);
+      leg.departureTimeStr = formatTime(vehicleDepMin);
+      leg.arrivalTimeStr = formatTime(vehicleDepMin + rideTime);
+      legClockMin += leg.timeMin;
+    }
+  }
+
+  // Derive transfer count strictly from line/service changes
+  let derivedTransfers = 0;
+  let prevService: string | undefined;
+  for (const leg of merged) {
+    if (leg.mode !== "walk") {
+      const currentService = leg.line ?? leg.busNumber ?? leg.mode;
+      if (prevService !== undefined && prevService !== currentService) {
+        derivedTransfers++;
+      }
+      prevService = currentService;
+    }
+  }
+
   return {
     legs: merged,
     totalDistanceM,
     transitDistanceM,
     totalTimeMin,
     walkDistanceM,
-    transfers: Math.max(0, transitLegs.length - 1),
+    transfers: derivedTransfers,
     co2g: merged.reduce((s, l) => s + l.co2g, 0),
     totalFareRs,
     fareBreakdown,
     score: res.score,
+    departureTimeMin: startDepMin,
+    departureTimeStr: formatTime(startDepMin),
+    arrivalTimeStr: formatTime(startDepMin + totalTimeMin),
   };
 }
 
@@ -1135,43 +1333,20 @@ export function filterParetoFrontier(candidates: Journey[]): Journey[] {
  * Limits ORS calls to the top 3 closest candidate stops (distance > 80m) to strictly
  * respect the 40 requests/minute API rate limit, using haversine fallback for the rest.
  */
-async function resolveAccessEgressEdges(
+function resolveAccessEgressEdges(
   origin: LatLng,
   destination: LatLng,
-): Promise<{
+): {
   accessEdges: Edge[];
   egressEdges: Map<string, Edge>;
   directWalkEdge: Edge | undefined;
-}> {
+} {
   const nearOrigin = nearestPlaces(origin);
   const nearDest = nearestPlaces(destination);
-
-  // Pick top 3 closest candidate stops for ORS resolution
-  const topAccess = nearOrigin.slice(0, 3);
-  const topEgress = nearDest.slice(0, 3);
-
   const directHvDist = haversine(origin.lat, origin.lon, destination.lat, destination.lon) * 1.25;
 
-  const [accessResults, egressResults, directResult] = await Promise.all([
-    Promise.all(topAccess.map(({ place }) => fetchWalkCost(origin, place))),
-    Promise.all(topEgress.map(({ place }) => fetchWalkCost(place, destination))),
-    directHvDist <= 1200 ? fetchWalkCost(origin, destination) : Promise.resolve(null),
-  ]);
-
-  // Build access edges (ORIGIN -> placeNode)
-  const accessEdges: Edge[] = nearOrigin.map(({ place, d }, idx) => {
-    const ors = idx < 3 ? accessResults[idx] : null;
-    if (ors) {
-      return {
-        to: placeNode(place.id),
-        kind: "walk" as const,
-        toPlace: place.id,
-        distanceM: ors.distanceM,
-        timeMin: ors.timeMin,
-        co2g: 0,
-        orsResolved: true,
-      };
-    }
+  // Build access edges (ORIGIN -> placeNode) using local 1.25 estimation
+  const accessEdges: Edge[] = nearOrigin.map(({ place, d }) => {
     const { d: wd, t } = walkEdge(origin, place, d * 1.25);
     return {
       to: placeNode(place.id),
@@ -1180,55 +1355,36 @@ async function resolveAccessEgressEdges(
       distanceM: wd,
       timeMin: t,
       co2g: 0,
+      path: [{ lat: origin.lat, lon: origin.lon }, { lat: place.lat, lon: place.lon }],
     };
   });
 
   const egressEdges = new Map<string, Edge>();
-  nearDest.forEach(({ place, d }, idx) => {
-    const ors = idx < 3 ? egressResults[idx] : null;
+  nearDest.forEach(({ place, d }) => {
     const pn = placeNode(place.id);
-    if (ors) {
-      egressEdges.set(pn, {
-        to: "DEST",
-        kind: "walk",
-        fromPlace: place.id,
-        distanceM: ors.distanceM,
-        timeMin: ors.timeMin,
-        co2g: 0,
-        orsResolved: true,
-      });
-    } else {
-      const { d: wd, t } = walkEdge(place, destination, d * 1.25);
-      egressEdges.set(pn, {
-        to: "DEST",
-        kind: "walk",
-        fromPlace: place.id,
-        distanceM: wd,
-        timeMin: t,
-        co2g: 0,
-      });
-    }
+    const { d: wd, t } = walkEdge(place, destination, d * 1.25);
+    egressEdges.set(pn, {
+      to: "DEST",
+      kind: "walk",
+      fromPlace: place.id,
+      distanceM: wd,
+      timeMin: t,
+      co2g: 0,
+      path: [{ lat: place.lat, lon: place.lon }, { lat: destination.lat, lon: destination.lon }],
+    });
   });
 
   // Direct walk edge
   let directWalkEdge: Edge | undefined;
-  if (directResult && directResult.distanceM <= 700) {
-    directWalkEdge = {
-      to: "DEST",
-      kind: "walk",
-      distanceM: directResult.distanceM,
-      timeMin: directResult.timeMin,
-      co2g: 0,
-      orsResolved: true,
-    };
-  } else if (directHvDist <= 700) {
-    const { d, t } = walkEdge(origin, destination);
+  if (directHvDist <= 700) {
+    const { d, t } = walkEdge(origin, destination, directHvDist);
     directWalkEdge = {
       to: "DEST",
       kind: "walk",
       distanceM: d,
       timeMin: t,
       co2g: 0,
+      path: [{ lat: origin.lat, lon: origin.lon }, { lat: destination.lat, lon: destination.lon }],
     };
   }
 
@@ -1237,16 +1393,8 @@ async function resolveAccessEgressEdges(
 
 /** Plans a journey using Pareto Multi-Objective Routing.
  *
- * 1. Computes the optimal route for the user's selected preference profile.
- * 2. Generates candidate routes across all multi-modal objective vectors:
- *    - Travel Time (fastest)
- *    - Walking Distance (least_walk)
- *    - Transfer Count (fewest_transfers)
- *    - CO₂ Emissions (low_co2)
- *    - Alternative transit corridors (line banning)
- * 3. Applies Pareto Dominance filtering: prunes all routes that are strictly
- *    worse across all 4 metrics.
- * 4. Returns a curated set of non-dominated routes representing distinct trade-offs.
+ * Runs purely in-memory using local graph and Haversine * 1.25 walking estimations.
+ * Returns candidate routes in < 50ms without waiting for external API calls.
  */
 export async function planJourney(
   origin: LatLng,
@@ -1255,7 +1403,7 @@ export async function planJourney(
   departureTimeMin?: number,
 ): Promise<{ journeys: Journey[]; error?: string }> {
   const { accessEdges, egressEdges, directWalkEdge } =
-    await resolveAccessEgressEdges(origin, destination);
+    resolveAccessEgressEdges(origin, destination);
 
   const now = new Date();
   const depMin = departureTimeMin != null ? departureTimeMin : (now.getHours() * 60 + now.getMinutes());
@@ -1334,12 +1482,15 @@ export async function planJourney(
     }
   }
 
-  return { journeys: orderedJourneys.slice(0, 4) };
+  const finalJourneys = orderedJourneys.slice(0, 4);
+  return { journeys: finalJourneys };
 }
 
-function signature(j: Journey) {
-  return j.legs.map((l) => `${l.mode}:${l.line ?? ""}:${l.from}>${l.to}`).join("|");
+export function signature(j: Journey): string {
+  return j.legs.map((l) => `${l.mode}:${l.line ?? ""}:${l.busNumber ?? ""}:${l.from}>${l.to}`).join("|");
 }
+
+
 
 export interface SearchablePlace {
   id: string;
@@ -1406,34 +1557,41 @@ export async function enrichWalkLegs(
   journey: Journey,
   origin: LatLng,
   destination: LatLng,
+  pref: Preference = "balanced",
 ): Promise<Journey> {
   const enriched = await Promise.all(
     journey.legs.map(async (leg): Promise<Leg> => {
       if (leg.mode !== "walk") return leg;
 
-      // Determine real start/end coordinates for this walk leg
+      // Skip if already resolved by ORS/OSM
+      if (leg.orsResolved) {
+        return leg;
+      }
+
       const from =
-        leg.path.length > 0
+        leg.path && leg.path.length > 0
           ? leg.path[0]!
           : { lat: origin.lat, lon: origin.lon };
       const to =
-        leg.path.length > 1
+        leg.path && leg.path.length > 1
           ? leg.path[leg.path.length - 1]!
           : { lat: destination.lat, lon: destination.lon };
 
       const ors = await walkRoute(from, to);
-      if (!ors) return leg; // fallback: keep original leg (already has accurate cost from planJourney)
+      if (!ors || !ors.path || ors.path.length < 2) return leg;
+
+      const walkTime = (ors.distanceM / 1000 / PARAMS.walkSpeedKmh) * 60;
 
       return {
         ...leg,
         distanceM: ors.distanceM,
-        timeMin: ors.timeMin,
+        timeMin: walkTime,
         path: ors.path,
+        orsResolved: true,
       };
     }),
   );
 
-  // Recompute journey-level totals from enriched legs
   const totalDistanceM = enriched.reduce((s, l) => s + l.distanceM, 0);
   const walkDistanceM = enriched
     .filter((l) => l.mode === "walk")
@@ -1441,15 +1599,44 @@ export async function enrichWalkLegs(
   const transitDistanceM = enriched
     .filter((l) => l.mode !== "walk")
     .reduce((s, l) => s + l.distanceM, 0);
+  const totalTimeMin = enriched.reduce((s, l) => s + l.timeMin, 0);
 
-  return {
+  // Re-synchronize departure and arrival time strings across legs if timeline shifted
+  const startDepMin = journey.departureTimeMin ?? (() => {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  })();
+
+  let legClockMin = startDepMin;
+  for (const leg of enriched) {
+    if (leg.mode === "walk") {
+      leg.departureTimeStr = formatTime(legClockMin);
+      legClockMin += leg.timeMin;
+      leg.arrivalTimeStr = formatTime(legClockMin);
+    } else {
+      const wait = leg.waitMin ?? 0;
+      const vehicleDepMin = leg.scheduledDepartureMin != null ? leg.scheduledDepartureMin : (legClockMin + wait);
+      const rideTime = Math.max(0.5, leg.timeMin - wait);
+      leg.departureTimeStr = formatTime(vehicleDepMin);
+      leg.arrivalTimeStr = formatTime(vehicleDepMin + rideTime);
+      legClockMin += leg.timeMin;
+    }
+  }
+
+  const updatedJourney: Journey = {
     ...journey,
     legs: enriched,
     totalDistanceM,
     transitDistanceM,
-    totalTimeMin: enriched.reduce((s, l) => s + l.timeMin, 0),
+    totalTimeMin,
     walkDistanceM,
+    score: journey.score,
     totalFareRs: journey.totalFareRs,
     fareBreakdown: journey.fareBreakdown,
+    departureTimeMin: startDepMin,
+    departureTimeStr: formatTime(startDepMin),
+    arrivalTimeStr: formatTime(startDepMin + totalTimeMin),
   };
+  updatedJourney.score = calculateJourneyScore(updatedJourney, pref);
+  return updatedJourney;
 }

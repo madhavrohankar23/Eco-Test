@@ -707,32 +707,31 @@ function Planner() {
     );
   };
 
-  /** Plan a journey with ORS-accurate walk costs baked into Dijkstra */
-    const plan = async (overrideOrigin?: Point, overrideDestination?: Point) => {
-      const o = overrideOrigin ?? origin;
-      const d = overrideDestination ?? destination;
-      if (!o || !d) return;
-      setSelected(0);
-      setEnriching(true);
+    /** Plan a journey: fast local search first (< 50ms), then enrich selected journeys with ORS */
+  const plan = async (overrideOrigin?: Point, overrideDestination?: Point) => {
+    const o = overrideOrigin ?? origin;
+    const d = overrideDestination ?? destination;
+    if (!o || !d) return;
+    setSelected(0);
+    setEnriching(true);
 
-      try {
-        // planJourney now pre-fetches ORS walk costs before Dijkstra,
-        // so route selection uses accurate road distances, not haversine.
-        const depMin = getDepartureMinutes();
-        const raw = await planJourney(o, d, pref, depMin);
-        setResult(raw);
+    try {
+      const depMin = getDepartureMinutes();
+      // 1. Fast local graph search completes immediately (< 50ms)
+      const raw = await planJourney(o, d, pref, depMin);
+      setResult(raw);
 
-        if (!raw.journeys.length) return;
+      if (!raw.journeys.length) return;
 
-        // Enrich walk legs with detailed road geometry for the map
-        const enriched = await Promise.all(
-          raw.journeys.map((j) => enrichWalkLegs(j, o, d)),
-        );
-        setResult({ ...raw, journeys: enriched });
-      } finally {
-        setEnriching(false);
-      }
-    };
+      // 2. Asynchronously enrich walking legs of selected journeys with actual street polylines & exact walking metrics
+      const enriched = await Promise.all(
+        raw.journeys.map((j) => enrichWalkLegs(j, o, d, pref)),
+      );
+      setResult({ ...raw, journeys: enriched });
+    } finally {
+      setEnriching(false);
+    }
+  };
 
   /** Triggered by "Navigate / Go" in Nearby panel */
   const handleNavigateToNearby = (stop: NearbyStop) => {
