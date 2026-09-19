@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Mail, Lock, ArrowRight, Loader2, Eye, EyeOff, Leaf, Phone, CheckCircle2, Sparkles, KeyRound } from "lucide-react";
 import { useAuth, DEMO_CREDENTIALS } from "../context/AuthContext";
@@ -40,7 +40,7 @@ function LoginComponent() {
     try {
       loginAsDemoUser();
       navigate({ to: "/app" });
-    } catch (err: any) {
+    } catch {
       setError("Demo login error");
     } finally {
       setIsLoading(false);
@@ -59,20 +59,21 @@ function LoginComponent() {
     }
 
     try {
-      let result: any;
+      let result: { error?: { message?: string } } | null | unknown;
       if (loginMethod === "email") {
         result = await signInWithEmail(email.trim(), password);
       } else {
         result = await signInWithPhone(mobile.trim(), password);
       }
 
-      if (result?.error) {
+      if (result && typeof result === "object" && "error" in result && result.error) {
         throw result.error;
       }
 
       navigate({ to: "/app" });
-    } catch (err: any) {
-      setError(err.message || "Login failed. Please check your credentials or use 1-Click Demo Sign In.");
+    } catch (err) {
+      const msg = err && typeof err === "object" && "message" in err ? String(err.message) : undefined;
+      setError(msg || "Login failed. Please check your credentials or use 1-Click Demo Sign In.");
     } finally {
       setIsLoading(false);
     }
@@ -196,9 +197,12 @@ function LoginComponent() {
               setError("");
               try {
                 const result = await signInWithGoogle();
-                if (result?.error) throw result.error;
-              } catch (err: any) {
-                setError(err.message || "Failed to sign in with Google.");
+                if (result && typeof result === "object" && "error" in result && result.error) {
+                  throw result.error;
+                }
+              } catch (err) {
+                const msg = err && typeof err === "object" && "message" in err ? String(err.message) : undefined;
+                setError(msg || "Failed to sign in with Google.");
                 setIsLoading(false);
               }
             }}

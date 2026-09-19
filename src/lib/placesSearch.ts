@@ -1,4 +1,4 @@
-import { searchablePlaces } from "@/lib/routing";
+import { searchablePlaces, allLines } from "@/lib/routing";
 import { NAGPUR_POIS, type NagpurPOI } from "@/lib/nagpurPlaces";
 
 export interface UnifiedPlaceResult {
@@ -57,11 +57,15 @@ export function searchLocalPlaces(q: string, limit = 8): UnifiedPlaceResult[] {
 
       let lineName: string | undefined;
       if (isMetro) {
-        if (nameLower.includes("orange")) {
-          lineName = "Orange Line";
-        } else if (nameLower.includes("blue")) {
-          lineName = "Blue Line";
-        }
+        const parentLine = allLines.find(
+          (l) =>
+            l.mode === "metro" &&
+            l.points.some(
+              (p: { lat: number; lon: number }) =>
+                Math.abs(p.lat - place.lat) < 0.0005 && Math.abs(p.lon - place.lon) < 0.0005,
+            ),
+        );
+        lineName = parentLine?.name;
       }
 
       results.push({
@@ -148,8 +152,11 @@ export async function searchOnlinePlaces(
       const name = p.name || p.street || query;
       const nameLower = name.toLowerCase();
 
-      if (seenNames.has(nameLower)) continue;
-      seenNames.add(nameLower);
+      // Dedup by name+coordinates: two distinct places with the same name (e.g. two
+      // 'Sitabuldi' stops at different locations) should both appear in results.
+      const dedupKey = nameLower + "|" + lat.toFixed(3) + "|" + lon.toFixed(3);
+      if (seenNames.has(dedupKey)) continue;
+      seenNames.add(dedupKey);
 
       // Build readable subtitle (e.g. "Dharampeth, Nagpur, Maharashtra")
       const parts = [p.street, p.locality, p.city || "Nagpur", p.state]
@@ -174,6 +181,11 @@ export async function searchOnlinePlaces(
       });
     }
 
+    // Cap cache to 50 entries to avoid unbounded memory growth in long sessions
+    if (onlineCache.size >= 50) {
+      const firstKey = onlineCache.keys().next().value;
+      if (firstKey !== undefined) onlineCache.delete(firstKey);
+    }
     onlineCache.set(cacheKey, onlineResults);
     return onlineResults;
   } catch (err) {
