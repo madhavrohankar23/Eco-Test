@@ -23,6 +23,7 @@ import {
   MapPin,
   Menu,
   Navigation2,
+  Radio,
   Repeat,
   Route as RouteIcon,
   Smartphone,
@@ -30,7 +31,7 @@ import {
   Timer,
   TrainFront,
   Trash2,
-    X,
+  X,
   Zap,
   Sprout,
   TrendingDown,
@@ -48,6 +49,13 @@ import {
   PARAMS,
 } from "@/lib/routing";
 import { findNearby, fmtNearbyDist, type NearbyStop, type NearbyResult } from "@/lib/nearby";
+import LiveBusTracker from "@/components/LiveBusTracker";
+import {
+  fetchLiveRouteInfo,
+  type LiveBusRoute,
+  type LiveBusStop,
+  type LiveRouteTelemetry,
+} from "@/lib/liveBus";
 
 // MapView uses Leaflet which accesses `window` — must be client-only (no SSR)
 const MapView = lazy(() =>
@@ -657,13 +665,78 @@ function Planner() {
 
   // Google Maps Style Navigation Rail state
   const [cardOpen, setCardOpen] = useState(true);
-  const [activeRailItem, setActiveRailItem] = useState<"nearby" | "directions" | "saved" | "recents" | "stats" | "eco">("directions");
+  const [activeRailItem, setActiveRailItem] = useState<"nearby" | "directions" | "live" | "saved" | "recents" | "stats" | "eco">("directions");
 
   // Nearby Transit state
   const [nearbyRadiusM, setNearbyRadiusM] = useState(2500);
   const [nearbyAnchor, setNearbyAnchor] = useState<{ lat: number; lon: number; name: string } | null>(null);
   const [nearbyLocating, setNearbyLocating] = useState(false);
   const [nearbyLocError, setNearbyLocError] = useState<string | null>(null);
+
+  // Live Bus Tracking state (powered by Chalo API)
+  const [selectedLiveRoute, setSelectedLiveRoute] = useState<LiveBusRoute | null>(null);
+  const [liveTelemetry, setLiveTelemetry] = useState<LiveRouteTelemetry | null>(null);
+  const [selectedLiveStop, setSelectedLiveStop] = useState<LiveBusStop | null>(null);
+  const [isLivePolling, setIsLivePolling] = useState(false);
+  const [liveRefreshCountdown, setLiveRefreshCountdown] = useState(7);
+
+  // 7-second auto-refresh polling for Live Bus Tracking
+  useEffect(() => {
+    if (activeRailItem !== "live" || !selectedLiveRoute) {
+      setLiveTelemetry(null);
+      setLiveRefreshCountdown(7);
+      return;
+    }
+
+    let isSubscribed = true;
+    const stopIds = selectedLiveRoute.stops.map((s) => s.stop_id);
+
+    const poll = async () => {
+      if (!isSubscribed) return;
+      setIsLivePolling(true);
+      try {
+        const data = await fetchLiveRouteInfo(selectedLiveRoute.route_id, stopIds);
+        if (isSubscribed) {
+          setLiveTelemetry(data);
+          setLiveRefreshCountdown(7);
+        }
+      } finally {
+        if (isSubscribed) setIsLivePolling(false);
+      }
+    };
+
+    // Initial fetch immediately
+    void poll();
+
+    // 1-second countdown interval with 7-second polling cycle
+    const interval = setInterval(() => {
+      setLiveRefreshCountdown((prev) => {
+        if (prev <= 1) {
+          void poll();
+          return 7;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [activeRailItem, selectedLiveRoute]);
+
+  const handleManualLiveRefresh = async () => {
+    if (!selectedLiveRoute) return;
+    setIsLivePolling(true);
+    try {
+      const stopIds = selectedLiveRoute.stops.map((s) => s.stop_id);
+      const data = await fetchLiveRouteInfo(selectedLiveRoute.route_id, stopIds);
+      setLiveTelemetry(data);
+      setLiveRefreshCountdown(7);
+    } finally {
+      setIsLivePolling(false);
+    }
+  };
 
   const nearbyResults = useMemo<NearbyResult>(
     () => (nearbyAnchor ? findNearby(nearbyAnchor, nearbyRadiusM) : { busStops: [], metroStations: [] }),
@@ -926,7 +999,7 @@ function Planner() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const handleRailClick = (item: "nearby" | "directions" | "saved" | "recents" | "stats" | "eco") => {
+  const handleRailClick = (item: "nearby" | "directions" | "live" | "saved" | "recents" | "stats" | "eco") => {
     if (activeRailItem === item && cardOpen) {
       // Toggle card if clicking active
       setCardOpen(false);
@@ -993,6 +1066,31 @@ function Planner() {
               <Compass className="size-5" />
             </div>
             <span>Nearby</span>
+          </button>
+
+          {/* Live Bus Tracking Button (Real-time GPS via Chalo API) */}
+          <button
+            onClick={() => handleRailClick("live")}
+            className={`group relative flex flex-col items-center gap-1 text-[10px] font-medium transition ${
+              activeRailItem === "live" && cardOpen
+                ? "text-indigo-600"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <div
+              className={`relative flex size-10 items-center justify-center rounded-2xl transition ${
+                activeRailItem === "live" && cardOpen
+                  ? "bg-indigo-600 text-white shadow-md ring-2 ring-indigo-500/30"
+                  : "bg-secondary/60 group-hover:bg-secondary group-hover:shadow-sm"
+              }`}
+            >
+              <Radio className="size-5" />
+              <span className="absolute -right-0.5 -top-0.5 flex size-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+              </span>
+            </div>
+            <span>Live Bus</span>
           </button>
 
           {/* Saved Places Button */}
@@ -1181,9 +1279,15 @@ function Planner() {
           {/* Top Mode Bar */}
           <header className="flex items-center justify-between border-b border-border bg-gradient-to-r from-primary/5 via-card to-card px-4 py-3">
             <div className="flex items-center gap-2">
-              <span className="flex size-7 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+              <span
+                className={`flex size-7 items-center justify-center rounded-xl text-white shadow-sm ${
+                  activeRailItem === "live" ? "bg-indigo-600" : "bg-primary"
+                }`}
+              >
                 {activeRailItem === "nearby" ? (
                   <Compass className="size-4" />
+                ) : activeRailItem === "live" ? (
+                  <Radio className="size-4" />
                 ) : activeRailItem === "saved" ? (
                   <Bookmark className="size-4" />
                 ) : activeRailItem === "recents" ? (
@@ -1200,24 +1304,28 @@ function Planner() {
                 <h1 className="text-sm font-bold tracking-tight text-foreground">
                   {activeRailItem === "nearby"
                     ? "Nearby Transit"
-                    : activeRailItem === "saved"
-                      ? "Saved Places"
-                      : activeRailItem === "recents"
-                        ? "Commuter Routes"
-                        : activeRailItem === "stats"
-                          ? "Nagpur Network"
-                          : "Plan Your Journey"}
+                    : activeRailItem === "live"
+                      ? "Live Bus Tracking"
+                      : activeRailItem === "saved"
+                        ? "Saved Places"
+                        : activeRailItem === "recents"
+                          ? "Commuter Routes"
+                          : activeRailItem === "stats"
+                            ? "Nagpur Network"
+                            : "Plan Your Journey"}
                 </h1>
                 <p className="text-[10px] text-muted-foreground">
                   {activeRailItem === "nearby"
                     ? "Bus stops & Metro within coverage radius"
-                    : activeRailItem === "saved"
-                      ? "Popular destinations in Nagpur"
-                      : activeRailItem === "recents"
-                        ? "Instant 1-click commuter trips"
-                        : activeRailItem === "stats"
-                          ? "Metro & Bus multimodal stats"
-                          : "Find the best route for "}
+                    : activeRailItem === "live"
+                      ? "Real-time Aapli Bus GPS & live ETAs (Chalo)"
+                      : activeRailItem === "saved"
+                        ? "Popular destinations in Nagpur"
+                        : activeRailItem === "recents"
+                          ? "Instant 1-click commuter trips"
+                          : activeRailItem === "stats"
+                            ? "Metro & Bus multimodal stats"
+                            : "Find the best route for "}
                 </p>
               </div>
             </div>
@@ -1417,6 +1525,20 @@ function Planner() {
                   </div>
                 )}
               </div>
+            )}
+
+            {/* ── FEATURE 1B: LIVE BUS TRACKING (CHALO API) ── */}
+            {activeRailItem === "live" && (
+              <LiveBusTracker
+                selectedRoute={selectedLiveRoute}
+                onSelectRoute={setSelectedLiveRoute}
+                telemetry={liveTelemetry}
+                selectedStop={selectedLiveStop}
+                onSelectStop={setSelectedLiveStop}
+                isPolling={isLivePolling}
+                refreshSecondsRemaining={liveRefreshCountdown}
+                onManualRefresh={handleManualLiveRefresh}
+              />
             )}
 
             {/* ── FEATURE 2: ROUTE PLANNER / DIRECTIONS ── */}
@@ -1946,6 +2068,10 @@ function Planner() {
               nearbyAnchor={activeRailItem === "nearby" ? nearbyAnchor : null}
               nearbyRadiusM={nearbyRadiusM}
               nearbyMarkers={activeRailItem === "nearby" ? nearbyMarkers : []}
+              liveRoute={activeRailItem === "live" ? selectedLiveRoute : null}
+              liveTelemetry={activeRailItem === "live" ? liveTelemetry : null}
+              selectedLiveStop={activeRailItem === "live" ? selectedLiveStop : null}
+              onSelectLiveStop={setSelectedLiveStop}
             />
           </Suspense>
         ) : (
