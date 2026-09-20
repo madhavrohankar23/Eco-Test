@@ -6,14 +6,19 @@ import {
   CircleMarker,
   Circle,
   Tooltip,
+  Marker,
+  Popup,
   useMap,
   useMapEvents,
 } from "react-leaflet";
 import { useEffect } from "react";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Journey } from "@/lib/routing";
 import { allLines, busStops, metroStations } from "@/lib/routing";
 import type { NearbyStop } from "@/lib/nearby";
+import type { LiveBusRoute, LiveRouteTelemetry, LiveBusStop } from "@/lib/liveBus";
+import { formatLiveEta } from "@/lib/liveBus";
 
 const MODE_COLOR: Record<string, string> = {
   walk: "#64748b",
@@ -50,6 +55,26 @@ function Fit({ journey }: { journey: Journey | null }) {
   return null;
 }
 
+/** Fits the camera bounds to the selected live bus route polyline */
+function FitLiveRoute({ route }: { route: LiveBusRoute | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!route || !route.polyline || route.polyline.length === 0) return;
+    map.fitBounds(route.polyline, { padding: [60, 60], maxZoom: 15 });
+  }, [route, map]);
+  return null;
+}
+
+/** Smoothly centers on the selected stop in live bus tracking */
+function FlyToLiveStop({ stop }: { stop: LiveBusStop | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!stop) return;
+    map.flyTo([stop.lat, stop.lon], 16, { duration: 0.8 });
+  }, [stop, map]);
+  return null;
+}
+
 /** Smoothly fly to the position and adjust zoom level when radius changes. */
 function FlyToLocation({ pos, radiusM }: { pos: { lat: number; lon: number }; radiusM?: number }) {
   const map = useMap();
@@ -78,6 +103,35 @@ function ClickHandler({
   return null;
 }
 
+/** Creates a Chalo-style live bus vehicle marker with animated pulse, registration badge, and halted warning */
+function createLiveBusIcon(vNo: string, isHalted: boolean) {
+  return L.divIcon({
+    className: "live-bus-vehicle-marker",
+    html: `
+      <div style="position: relative; display: flex; flex-direction: column; align-items: center; transform: translate(-50%, -50%); cursor: pointer;">
+        ${
+          isHalted
+            ? `<div style="margin-bottom: 3px; background: #ffffff; color: #b45309; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 9999px; box-shadow: 0 2px 8px rgba(0,0,0,0.18); border: 1px solid #fef3c7; display: flex; align-items: center; gap: 4px; white-space: nowrap;">
+                <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #f59e0b;"></span>
+                Bus is halted
+              </div>`
+            : ""
+        }
+        <div style="position: relative; width: 34px; height: 34px; border-radius: 50%; background: #0284c7; color: white; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.45); border: 2.5px solid white;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 6v6"/><path d="M15 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4C2.9 6 1.9 6.8 1.6 7.8L.2 12.8c-.1.4-.2.8-.2 1.2 0 .4.1.8.2 1.2l.8 2.8h3"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/>
+          </svg>
+        </div>
+        <div style="margin-top: 2px; background: #0f172a; color: #ffffff; font-size: 9px; font-weight: 800; padding: 1px 6px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); white-space: nowrap; letter-spacing: 0.2px;">
+          ${vNo}
+        </div>
+      </div>
+    `,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
+
 export default function MapView({
   journey,
   origin,
@@ -92,6 +146,10 @@ export default function MapView({
   nearbyAnchor,
   nearbyRadiusM = 2500,
   nearbyMarkers = [],
+  liveRoute = null,
+  liveTelemetry = null,
+  selectedLiveStop = null,
+  onSelectLiveStop,
 }: {
   journey: Journey | null;
   origin?: { lat: number; lon: number } | null;
@@ -111,6 +169,14 @@ export default function MapView({
   nearbyRadiusM?: number;
   /** Nearby transit stops to show as map markers */
   nearbyMarkers?: NearbyStop[];
+  /** Live bus tracking: currently selected route */
+  liveRoute?: LiveBusRoute | null;
+  /** Live bus tracking: real-time telemetry from Chalo */
+  liveTelemetry?: LiveRouteTelemetry | null;
+  /** Live bus tracking: currently inspected stop */
+  selectedLiveStop?: LiveBusStop | null;
+  /** Callback when a stop along the live bus route is tapped */
+  onSelectLiveStop?: ((stop: LiveBusStop | null) => void) | undefined;
 }) {
     const cartoApiKey = (import.meta.env as Record<string, string | undefined>)["VITE_CARTO_API_KEY"] || "cb1_3m87_1_9a62d04449bdddc8bb5b8466";
   const cartoTileUrl = cartoApiKey
@@ -356,6 +422,134 @@ export default function MapView({
           </CircleMarker>
         );
       })}
+
+      {/* ── LIVE BUS TRACKING MAP OVERLAY ── */}
+      {liveRoute && (
+        <>
+          {/* 1. Live Route Street-Level Polyline */}
+          <Polyline
+            positions={liveRoute.polyline}
+            pathOptions={{
+              color: "#0f172a",
+              weight: 5.5,
+              opacity: 0.95,
+              lineCap: "round",
+              lineJoin: "round",
+            }}
+          >
+            <Tooltip sticky>
+              <div className="text-xs font-bold">
+                BUS {liveRoute.bus_number}: {liveRoute.route_name}
+              </div>
+            </Tooltip>
+          </Polyline>
+
+          {/* 2. All Sequenced Stops along Route */}
+          {liveRoute.stops.map((stop, idx) => {
+            const isFirst = idx === 0;
+            const isLast = idx === liveRoute.stops.length - 1;
+            const isSelected = selectedLiveStop?.stop_id === stop.stop_id;
+            const stopEtas = liveTelemetry?.stopsEta?.[stop.stop_id];
+            const primaryEta = stopEtas?.[0];
+
+            const color = isFirst ? "#16a34a" : isLast ? "#dc2626" : isSelected ? "#0284c7" : "#0f172a";
+            const radius = isFirst || isLast ? 8 : isSelected ? 7 : 5;
+
+            return (
+              <CircleMarker
+                key={`live-stop-${stop.stop_id || idx}`}
+                center={[stop.lat, stop.lon]}
+                radius={radius}
+                eventHandlers={{
+                  click: () => onSelectLiveStop?.(stop),
+                }}
+                pathOptions={{
+                  color,
+                  fillColor: isSelected ? "#0284c7" : "#ffffff",
+                  fillOpacity: 1,
+                  weight: isSelected ? 3 : 2,
+                }}
+              >
+                <Tooltip permanent={isSelected}>
+                  <div className="text-xs font-semibold">
+                    <span className="font-bold text-primary">#{stop.stop_sequence}</span> {stop.name}
+                    {isFirst && " (Start)"}
+                    {isLast && " (End)"}
+                    {primaryEta && primaryEta.etaSeconds >= 0 && (
+                      <span className="ml-1 rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-bold text-emerald-700">
+                        {formatLiveEta(primaryEta.etaSeconds)}
+                      </span>
+                    )}
+                  </div>
+                </Tooltip>
+
+                {isSelected && (
+                  <Popup
+                    position={[stop.lat, stop.lon]}
+                    autoPan={false}
+                    eventHandlers={{
+                      remove: () => onSelectLiveStop?.(null),
+                    }}
+                  >
+                    <div className="p-1 min-w-[170px] text-slate-800">
+                      <div className="flex items-center gap-1 text-xs font-bold text-slate-900">
+                        <span>#{stop.stop_sequence}</span>
+                        <span>{stop.name}</span>
+                      </div>
+
+                      {primaryEta && primaryEta.etaSeconds >= 0 ? (
+                        <div className="mt-2 space-y-1 rounded-xl bg-slate-50 p-2 text-xs border border-slate-200/80">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-700">🚌 {primaryEta.vNo}</span>
+                            <span className="font-extrabold text-emerald-600">
+                              {formatLiveEta(primaryEta.etaSeconds)}
+                            </span>
+                          </div>
+                          {primaryEta.isHalted && (
+                            <p className="flex items-center gap-1 text-[10px] font-bold text-amber-600">
+                              ⚠️ Bus is halted
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="mt-1.5 rounded-lg bg-slate-50 p-1.5 text-[11px] text-slate-500 border border-slate-200/60">
+                          No live bus approaching right now.
+                        </div>
+                      )}
+                    </div>
+                  </Popup>
+                )}
+              </CircleMarker>
+            );
+          })}
+
+          {/* 3. Live Moving Bus Vehicle Markers from Chalo Telemetry */}
+          {liveTelemetry?.vehicles?.map((v) => (
+            <Marker
+              key={`live-v-${v.vehicleId}`}
+              position={[v.lat, v.lon]}
+              icon={createLiveBusIcon(v.vNo, v.isHalted)}
+            >
+              <Tooltip>
+                <div className="text-xs font-semibold">
+                  <div className="font-bold">🚌 Vehicle {v.vNo}</div>
+                  <div className="text-[10px] text-slate-500">
+                    Status: {v.isHalted ? "⚠️ Halted" : "🟢 In Transit"}
+                  </div>
+                  {v.etaSeconds !== undefined && v.etaSeconds >= 0 && (
+                    <div className="text-[10px] text-emerald-600 font-bold">
+                      Next Stop ETA: {formatLiveEta(v.etaSeconds)}
+                    </div>
+                  )}
+                </div>
+              </Tooltip>
+            </Marker>
+          ))}
+
+          <FitLiveRoute route={liveRoute} />
+          <FlyToLiveStop stop={selectedLiveStop} />
+        </>
+      )}
 
       <DevBusRouteInspector />
       <ClickHandler onClick={onMapClick} />
