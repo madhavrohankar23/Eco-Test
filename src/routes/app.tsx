@@ -52,6 +52,7 @@ import { findNearby, fmtNearbyDist, type NearbyStop, type NearbyResult } from "@
 import LiveBusTracker from "@/components/LiveBusTracker";
 import {
   fetchLiveRouteInfo,
+  fetchLiveRouteDetails,
   type LiveBusRoute,
   type LiveBusStop,
   type LiveRouteTelemetry,
@@ -679,6 +680,42 @@ function Planner() {
   const [selectedLiveStop, setSelectedLiveStop] = useState<LiveBusStop | null>(null);
   const [isLivePolling, setIsLivePolling] = useState(false);
   const [liveRefreshCountdown, setLiveRefreshCountdown] = useState(7);
+
+  // Dynamically enrich selectedLiveRoute with Chalo's real-time stop coordinates and road polyline
+  useEffect(() => {
+    if (!selectedLiveRoute || selectedLiveRoute.isLiveEnriched) return;
+
+    let isSubscribed = true;
+    const loadDynamicRoute = async () => {
+      const rid = selectedLiveRoute.route_id;
+      try {
+        const details = await fetchLiveRouteDetails(rid);
+        if (details && details.stops.length > 0 && isSubscribed) {
+          setSelectedLiveRoute((prev) => {
+            if (!prev || prev.id !== selectedLiveRoute.id) return prev;
+            return {
+              ...prev,
+              route_id: rid,
+              stops: details.stops.map((s) => ({
+                ...s,
+                bus_number: prev.display_bus_number || prev.bus_number,
+              })),
+              stopsCount: details.stops.length,
+              polyline: details.polyline,
+              isLiveEnriched: true,
+            };
+          });
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    void loadDynamicRoute();
+    return () => {
+      isSubscribed = false;
+    };
+  }, [selectedLiveRoute]);
 
   // 7-second auto-refresh polling for Live Bus Tracking
   useEffect(() => {
