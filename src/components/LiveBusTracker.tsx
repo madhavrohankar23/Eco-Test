@@ -483,7 +483,7 @@ export default function LiveBusTracker({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
               <span>Route Stops ({selectedRoute.stopsCount})</span>
-              <span className="text-[10px] lowercase font-normal">tap stop to check ETA</span>
+              <span className="text-[10px] lowercase font-normal">Tap stop to check ETA</span>
             </div>
 
             <div className="max-h-[calc(100vh-380px)] space-y-1 overflow-y-auto pr-0.5">

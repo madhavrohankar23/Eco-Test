@@ -36,3 +36,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+work_log_report.md
+test_metro_fare_scenarios.ts
+test_routing_improvements.ts
