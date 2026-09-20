@@ -34,7 +34,9 @@ function getPersistentCache(key: string): WalkRouteResult | null {
   try {
     const raw = localStorage.getItem(`ors_${key}`);
     if (raw) return JSON.parse(raw);
-  } catch {}
+  } catch {
+    return null;
+  }
   return null;
 }
 
@@ -43,7 +45,9 @@ function setPersistentCache(key: string, result: WalkRouteResult) {
   if (typeof localStorage === "undefined") return;
   try {
     localStorage.setItem(`ors_${key}`, JSON.stringify(result));
-  } catch {}
+  } catch {
+    // localStorage may be full or disabled in private browsing
+  }
 }
 
 /**
@@ -117,8 +121,8 @@ export async function walkRoute(
 
   // 3. Try ORS if not in quota cooldown
   if (Date.now() >= orsDisabledUntil) {
-    const envMeta = (typeof import.meta !== "undefined" && (import.meta as any).env) ? ((import.meta as any).env as Record<string, string | undefined>) : undefined;
-    const envProc = (typeof process !== "undefined" && process.env) ? (process.env as Record<string, string | undefined>) : undefined;
+    const envMeta = typeof import.meta !== "undefined" ? (import.meta.env as Record<string, string | undefined>) : undefined;
+    const envProc = typeof process !== "undefined" && process.env ? (process.env as Record<string, string | undefined>) : undefined;
     const apiKey =
       envMeta?.["VITE_ORS_API_KEY"] ||
       envProc?.["VITE_ORS_API_KEY"] ||

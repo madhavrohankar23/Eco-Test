@@ -34,21 +34,23 @@ export const DEMO_USER: User = {
   factors: [],
 };
 
+type AuthResult = { data?: unknown; error?: { message?: string } | null } | null | unknown;
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
   isDemoUser: boolean;
   loginAsDemoUser: () => { data: { user: User; session: null }; error: null };
-  signUpWithEmail: (email: string, password: string, fullName: string, mobile: string) => Promise<any>;
-  signUpWithPhone: (phone: string, password: string, fullName: string, email: string) => Promise<any>;
-  signInWithEmail: (email: string, password: string) => Promise<any>;
-  signInWithPhone: (phone: string, password: string) => Promise<any>;
-  verifyOtp: (phone: string, token: string) => Promise<any>;
-  resetPassword: (email: string) => Promise<any>;
-  updatePassword: (newPassword: string) => Promise<any>;
-  signInWithGoogle: () => Promise<any>;
-  signOut: () => Promise<any>;
+  signUpWithEmail: (email: string, password: string, fullName: string, mobile: string) => Promise<AuthResult>;
+  signUpWithPhone: (phone: string, password: string, fullName: string, email: string) => Promise<AuthResult>;
+  signInWithEmail: (email: string, password: string) => Promise<AuthResult>;
+  signInWithPhone: (phone: string, password: string) => Promise<AuthResult>;
+  verifyOtp: (phone: string, token: string) => Promise<AuthResult>;
+  resetPassword: (email: string) => Promise<AuthResult>;
+  updatePassword: (newPassword: string) => Promise<AuthResult>;
+  signInWithGoogle: () => Promise<AuthResult>;
+  signOut: () => Promise<AuthResult>;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -156,16 +158,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         },
       });
     } catch (err) {
+      // Return the real error — do not fake success for phone signup failures.
       return {
-        data: {
-          user: {
-            ...DEMO_USER,
-            phone,
-            user_metadata: { full_name: fullName, email },
-          },
-          session: null,
-        },
-        error: null,
+        data: { user: null, session: null },
+        error: { message: "Unable to connect. Please check your internet connection and try again." },
       };
     }
   };
@@ -214,7 +210,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Phone Sign In with Supabase + Automatic Demo Bypass
   const signInWithPhone = async (phone: string, password: string) => {
-    const cleanPhone = phone.replace(/D/g, "");
+    const cleanPhone = phone.replace(/\D/g, "");
     const isDemoPhone = cleanPhone.endsWith(DEMO_CREDENTIALS.phone);
     const isDemoPass =
       DEMO_CREDENTIALS.alternatePasswords.some((p) => p.toLowerCase() === password.trim().toLowerCase()) ||

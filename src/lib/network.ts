@@ -1,4 +1,4 @@
-﻿import raw from "@/data/network.json";
+import raw from "@/data/network.json";
 import schedulesData from "@/data/bus_schedules.json";
 import { getFrequencyMin } from "./frequencies";
 
@@ -99,7 +99,10 @@ const CLUSTER_M = 120;
 const busSchedules: Record<
   string,
   { routeName: string; busNumber: string; routeId: string; durationMin: number; departures: number[] }
-> = schedulesData as any;
+> = schedulesData as unknown as Record<
+  string,
+  { routeName: string; busNumber: string; routeId: string; durationMin: number; departures: number[] }
+>;
 
 /**
  * Builds the multimodal network from the dataset with timetable, headway & stop offsets.

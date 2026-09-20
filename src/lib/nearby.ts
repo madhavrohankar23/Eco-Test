@@ -43,50 +43,51 @@ export function findNearby(
   }
 
   const maxBusM = searchRadiusM;
-  const maxMetroM = Math.max(searchRadiusM, 5000);
+  const maxMetroM = searchRadiusM;
 
-  // Calculate distances to all bus stops
-  const allBusStops: NearbyStop[] = busStops.map((s) => {
-    const distM = Math.round(haversine(anchor.lat, anchor.lon, s.lat, s.lon));
-    return {
-      id: s.id,
-      name: s.name,
-      lat: s.lat,
-      lon: s.lon,
-      mode: "bus" as const,
-      distM,
-      walkMin: Math.max(1, Math.ceil(distM / WALK_MPM)),
-    };
-  }).sort((a, b) => a.distM - b.distM);
+  // Calculate distances to all bus stops and filter strictly within search radius
+  const resultBus: NearbyStop[] = busStops
+    .map((s) => {
+      const distM = Math.round(haversine(anchor.lat, anchor.lon, s.lat, s.lon));
+      return {
+        id: s.id,
+        name: s.name,
+        lat: s.lat,
+        lon: s.lon,
+        mode: "bus" as const,
+        distM,
+        walkMin: Math.max(1, Math.ceil(distM / WALK_MPM)),
+      };
+    })
+    .filter((s) => s.distM <= maxBusM)
+    .sort((a, b) => a.distM - b.distM);
 
-  // Filter within radius, or fallback to closest 6
-  const filteredBus = allBusStops.filter((s) => s.distM <= maxBusM);
-  const resultBus = (filteredBus.length > 0 ? filteredBus : allBusStops).slice(0, 8);
-
-  // Calculate distances to all metro stations
-  const allMetroStations: NearbyStop[] = metroStations.map((s) => {
-    const distM = Math.round(haversine(anchor.lat, anchor.lon, s.lat, s.lon));
-    const parentLine = allLines.find(
-      (l) =>
-        l.mode === "metro" &&
-        l.points.some((p: { lat: number; lon: number }) => Math.abs(p.lat - s.lat) < 0.0005 && Math.abs(p.lon - s.lon) < 0.0005),
-    );
-    const lineName = parentLine?.name;
-    return {
-      id: s.id,
-      name: s.name,
-      lat: s.lat,
-      lon: s.lon,
-      mode: "metro" as const,
-      ...(lineName ? { lineName } : {}),
-      distM,
-      walkMin: Math.max(1, Math.ceil(distM / WALK_MPM)),
-    };
-  }).sort((a, b) => a.distM - b.distM);
-
-  // Filter within radius, or fallback to closest 4
-  const filteredMetro = allMetroStations.filter((s) => s.distM <= maxMetroM);
-  const resultMetro = (filteredMetro.length > 0 ? filteredMetro : allMetroStations).slice(0, 5);
+  // Calculate distances to all metro stations and filter strictly within search radius
+  const resultMetro: NearbyStop[] = metroStations
+    .map((s) => {
+      const distM = Math.round(haversine(anchor.lat, anchor.lon, s.lat, s.lon));
+      const parentLine = allLines.find(
+        (l) =>
+          l.mode === "metro" &&
+          l.points.some(
+            (p: { lat: number; lon: number }) =>
+              Math.abs(p.lat - s.lat) < 0.0005 && Math.abs(p.lon - s.lon) < 0.0005,
+          ),
+      );
+      const lineName = parentLine?.name;
+      return {
+        id: s.id,
+        name: s.name,
+        lat: s.lat,
+        lon: s.lon,
+        mode: "metro" as const,
+        ...(lineName ? { lineName } : {}),
+        distM,
+        walkMin: Math.max(1, Math.ceil(distM / WALK_MPM)),
+      };
+    })
+    .filter((s) => s.distM <= maxMetroM)
+    .sort((a, b) => a.distM - b.distM);
 
   return {
     busStops: resultBus,

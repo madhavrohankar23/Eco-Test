@@ -45,13 +45,16 @@ function UpdatePasswordComponent() {
 
     try {
       const result = await updatePassword(password);
-      if (result && result.error) throw result.error;
+      if (result && typeof result === "object" && "error" in result && result.error) {
+        throw result.error;
+      }
       setIsSuccess(true);
       setTimeout(() => {
         navigate({ to: "/login" });
       }, 2000);
-    } catch (err: any) {
-      setError(err.message || "Failed to update password.");
+    } catch (err) {
+      const msg = err && typeof err === "object" && "message" in err ? String(err.message) : undefined;
+      setError(msg || "Failed to update password.");
     } finally {
       setIsLoading(false);
     }

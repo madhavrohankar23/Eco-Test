@@ -3,7 +3,7 @@ import ProtectedRoute from "../components/ProtectedRoute";
 
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "../context/AuthContext";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import PlaceSearch, { type Point } from "@/components/PlaceSearch";
 import { Button } from "@/components/ui/button";
 import {
@@ -615,8 +615,11 @@ function Planner() {
       const now = new Date();
       return now.getHours() * 60 + now.getMinutes();
     }
-    const [h, m] = departureTime.split(":").map(Number);
-    return (h || 0) * 60 + (m || 0);
+    const [hStr, mStr] = departureTime.split(":");
+    const h = parseInt(hStr ?? "0", 10);
+    const m = parseInt(mStr ?? "0", 10);
+    // Guard against NaN from partial input (e.g. user types "07" with no colon)
+    return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
   };
   const [picking, setPicking] = useState<"origin" | "destination" | null>(null);
   const [showNetwork, setShowNetwork] = useState(false);
@@ -625,6 +628,10 @@ function Planner() {
   const [selected, setSelected] = useState(0);
   const [result, setResult] = useState<{ journeys: Journey[]; error?: string } | null>(null);
   const [enriching, setEnriching] = useState(false);
+  const [isPlanning, setIsPlanning] = useState(false);
+  // Cancellation token: each plan() call mints a new token. A newer call marks the
+  // previous token as cancelled so stale setResult calls are silently discarded.
+  const planTokenRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const [locating, setLocating] = useState(false);
   const [locError, setLocError] = useState<string | null>(null);
 
@@ -671,7 +678,7 @@ function Planner() {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => setIsMounted(true), []);
 
-  const useCurrentLocation = (target: "origin" | "destination" = "origin") => {
+  const handleGetLocation = (target: "origin" | "destination" = "origin") => {
     if (!navigator.geolocation) {
       setLocError("Geolocation is not supported by your browser.");
       return;
@@ -707,29 +714,63 @@ function Planner() {
     );
   };
 
-    /** Plan a journey: fast local search first (< 50ms), then enrich selected journeys with ORS */
-  const plan = async (overrideOrigin?: Point, overrideDestination?: Point) => {
+    /** Plan a journey: fast local search first (< 50ms), then enrich selected journeys with ORS.
+   *
+   * @param overrideOrigin      - Optional origin point (bypasses state)
+   * @param overrideDestination - Optional destination point (bypasses state)
+   * @param overridePref        - Optional preference to use immediately. Pass this from
+   *                              preference chip onClick handlers because setPref() is async
+   *                              and the closure still holds the OLD pref value when plan()
+   *                              is called in the same event handler.
+   */
+  const plan = async (overrideOrigin?: Point, overrideDestination?: Point, overridePref?: Preference) => {
     const o = overrideOrigin ?? origin;
     const d = overrideDestination ?? destination;
     if (!o || !d) return;
+
+    // --- Race-condition guard ---
+    // Cancel any previously in-flight plan() by marking its token stale.
+    // Any stale setResult() calls will check this flag and silently discard their update.
+    const prevToken = planTokenRef.current;
+    prevToken.cancelled = true;
+    const token = { cancelled: false };
+    planTokenRef.current = token;
+    // ----------------------------
+
+    const activePref = overridePref ?? pref;
+
     setSelected(0);
-    setEnriching(true);
+    setIsPlanning(true);
+    setEnriching(false);
 
     try {
       const depMin = getDepartureMinutes();
       // 1. Fast local graph search completes immediately (< 50ms)
-      const raw = await planJourney(o, d, pref, depMin);
+      const raw = await planJourney(o, d, activePref, depMin);
+
+      // Discard if a newer plan() call already started
+      if (token.cancelled) return;
+
+      setIsPlanning(false);
       setResult(raw);
 
       if (!raw.journeys.length) return;
 
-      // 2. Asynchronously enrich walking legs of selected journeys with actual street polylines & exact walking metrics
+      setEnriching(true);
+      // 2. Enrich walking legs with real ORS street polylines & exact walking metrics
       const enriched = await Promise.all(
-        raw.journeys.map((j) => enrichWalkLegs(j, o, d, pref)),
+        raw.journeys.map((j) => enrichWalkLegs(j, o, d, activePref)),
       );
+
+      // Discard if a newer plan() call superseded this one during enrichment
+      if (token.cancelled) return;
+
       setResult({ ...raw, journeys: enriched });
     } finally {
-      setEnriching(false);
+      if (!token.cancelled) {
+        setIsPlanning(false);
+        setEnriching(false);
+      }
     }
   };
 
@@ -831,6 +872,7 @@ function Planner() {
         transfers: journey.transfers,
         walkDistanceM: journey.walkDistanceM,
         co2g: journey.co2g,
+        totalFareRs: journey.totalFareRs,
         legs: journey.legs.map((l) => ({
           mode: l.mode,
           line: l.line,
@@ -853,7 +895,8 @@ function Planner() {
     setActiveRailItem("directions");
     setCardOpen(true);
     setResult(null);
-    void plan(item.origin, item.destination);
+    // Pass item.preference directly — setPref() is async and the closure would still hold the old value.
+    void plan(item.origin, item.destination, item.preference);
   };
 
   const handleMapClick = (p: { lat: number; lon: number }) => {
@@ -1079,7 +1122,7 @@ function Planner() {
             >
               {user ? (
                 <span className="font-bold text-xs">
-                  {((user.user_metadata as any)?.full_name ?? user.email ?? "U")[0]?.toUpperCase()}
+                  {((user.user_metadata?.["full_name"] as string | undefined) ?? user.email ?? "U")[0]?.toUpperCase()}
                 </span>
               ) : (
                 <User className="size-5" />
@@ -1093,11 +1136,11 @@ function Planner() {
             <div className="absolute bottom-1 left-16 z-[1050] w-64 rounded-2xl border border-border bg-white/95 p-4 shadow-2xl backdrop-blur-xl dark:bg-card/95 animate-in fade-in slide-in-from-left-2 duration-200">
               <div className="flex items-center gap-3 border-b border-border pb-3 mb-3">
                 <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-bold text-sm shadow-md">
-                  {((user?.user_metadata as any)?.full_name ?? user?.email ?? "U")[0]?.toUpperCase()}
+                  {((user?.user_metadata?.["full_name"] as string | undefined) ?? user?.email ?? "U")[0]?.toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-xs text-foreground truncate">
-                    {(user?.user_metadata as any)?.full_name ?? "Nagpur Commuter"}
+                    {(user?.user_metadata?.["full_name"] as string | undefined) ?? "Nagpur Commuter"}
                   </p>
                   <p className="text-[11px] text-muted-foreground truncate">
                     {user?.email ?? user?.phone ?? "Logged in"}
@@ -1397,7 +1440,7 @@ function Planner() {
                       dot="bg-primary"
                       isPickingMap={picking === "origin"}
                       onFocus={() => setPicking("origin")}
-                      onLocate={() => useCurrentLocation("origin")}
+                      onLocate={() => handleGetLocation("origin")}
                       locating={locating}
                     />
 
@@ -1409,7 +1452,7 @@ function Planner() {
                       dot="bg-destructive"
                       isPickingMap={picking === "destination"}
                       onFocus={() => setPicking("destination")}
-                      onLocate={() => useCurrentLocation("destination")}
+                      onLocate={() => handleGetLocation("destination")}
                       locating={locating}
                     />
                   </div>
@@ -1441,7 +1484,9 @@ function Planner() {
                         key={p.id}
                         onClick={() => {
                           setPref(p.id);
-                          if (origin && destination) void plan();
+                          // Pass p.id directly — setPref() is async (React state),
+                          // so plan() would read the OLD pref from the closure otherwise.
+                          if (origin && destination) void plan(undefined, undefined, p.id);
                         }}
                         className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all ${
                           active
@@ -1495,7 +1540,7 @@ function Planner() {
                   <Button
                     className="w-full rounded-2xl shadow-md"
                     onClick={() => void plan()}
-                    disabled={!origin || !destination}
+                    disabled={!origin || !destination || enriching || isPlanning}
                   >
                     <RouteIcon className="size-4" /> Plan journey
                   </Button>
@@ -1534,7 +1579,14 @@ function Planner() {
                   </button>
                 </div>
 
-                {enriching && (
+                {isPlanning && (
+                  <p className="flex items-center justify-center gap-1.5 text-xs font-medium text-primary">
+                    <Loader2 className="size-4 animate-spin" />
+                    Finding best routes...
+                  </p>
+                )}
+
+                {enriching && !isPlanning && (
                   <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
                     <Loader2 className="size-3 animate-spin text-primary" />
                     Enriching walking legs with ORS road routes…
@@ -1579,7 +1631,7 @@ function Planner() {
 
                 {/* Results Section */}
                 <div className="space-y-3 pt-2">
-                  {!result && (
+                  {!result && !isPlanning && (
                     <div className="rounded-2xl border border-dashed border-border bg-secondary/20 p-5 text-center">
                       <RouteIcon className="mx-auto size-6 text-muted-foreground/60" />
                       <p className="mt-2 text-sm font-semibold">Ready to route</p>
@@ -1881,19 +1933,19 @@ function Planner() {
             }
           >
             <MapView
-              journey={journey}
-              origin={origin}
-              destination={destination}
+              journey={activeRailItem === "directions" ? journey : null}
+              origin={activeRailItem === "directions" ? origin : null}
+              destination={activeRailItem === "directions" ? destination : null}
               showNetwork={showNetwork}
-              showBusStops={showBusStops}
-              showMetroStations={showMetroStations}
-              picking={picking}
+              showBusStops={showBusStops && activeRailItem === "directions"}
+              showMetroStations={showMetroStations && activeRailItem === "directions"}
+              picking={activeRailItem === "directions" ? picking : null}
               onMapClick={handleMapClick}
               isCurrentLocation={origin?.name === "Your location"}
               nearbyMode={cardOpen && activeRailItem === "nearby"}
-              nearbyAnchor={nearbyAnchor}
+              nearbyAnchor={activeRailItem === "nearby" ? nearbyAnchor : null}
               nearbyRadiusM={nearbyRadiusM}
-              nearbyMarkers={nearbyMarkers}
+              nearbyMarkers={activeRailItem === "nearby" ? nearbyMarkers : []}
             />
           </Suspense>
         ) : (

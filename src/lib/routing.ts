@@ -1,6 +1,6 @@
 import lineGeometriesData from "@/data/lineGeometries.json";
 import { buildNetwork, haversine, formatTime, type Place, type TransitNetwork } from "./network";
-import { walkRoute, clearWalkCache } from "./ors";
+import { walkRoute } from "./ors";
 import { getBusFare, getMetroFare, getMetroFareResult, getLegFare } from "./fares";
 
 
@@ -479,12 +479,13 @@ export function nearestPlaces(
 
 export function calculateJourneyScore(j: Journey, pref: Preference): number {
   const w = PREFERENCE_WEIGHTS[pref];
+  const busDistanceM = j.legs.filter((l) => l.mode === "bus").reduce((s, l) => s + l.distanceM, 0);
   return (
     j.totalTimeMin * w.time +
     (j.walkDistanceM / 1000) * w.walk +
     j.transfers * w.transfer +
     (j.co2g / 1000) * w.co2 +
-    (j.transitDistanceM / 1000) * w.busPenalty +
+    (busDistanceM / 1000) * w.busPenalty +
     j.totalFareRs * (w.fare ?? 0)
   );
 }
@@ -1198,9 +1199,27 @@ function toJourney(
       prev.path = [...prev.path, ...leg.path.slice(1)];
     } else merged.push({ ...leg });
   }
-  // drop negligible walking legs (origin/destination already at the stop)
-  for (let k = merged.length - 1; k >= 0; k--) {
-    if (merged[k]!.mode === "walk" && merged[k]!.distanceM < 30) merged.splice(k, 1);
+  // drop negligible walking access/egress legs (origin/destination already at the stop)
+  if (merged.length > 1 && merged.some((l) => l.mode !== "walk")) {
+    for (let k = merged.length - 1; k >= 0; k--) {
+      if (merged[k]!.mode === "walk" && merged[k]!.distanceM < 30) merged.splice(k, 1);
+    }
+  }
+
+  // Ensure journey always has at least one valid leg
+  if (merged.length === 0) {
+    const d = Math.round(haversine(origin.lat, origin.lon, destination.lat, destination.lon));
+    merged.push({
+      mode: "walk",
+      from: originName,
+      to: destName,
+      distanceM: d,
+      timeMin: Math.max(0.5, (d / 1000 / PARAMS.walkSpeedKmh) * 60),
+      co2g: 0,
+      fareRs: 0,
+      fareSource: "free_walk",
+      path: [origin, destination],
+    });
   }
   const transitLegs = merged.filter((l) => l.mode !== "walk");
   const totalDistanceM = merged.reduce((s, l) => s + l.distanceM, 0);
@@ -1547,9 +1566,9 @@ export const metroStations = searchablePlaces.filter((p) => p.modes.includes("me
  * Takes a completed Journey and enriches each walk leg with the full ORS
  * road geometry (polyline coordinates) for map rendering.
  *
- * NOTE: Since planJourney() now uses ORS costs during routing, the distanceM
- * and timeMin on walk legs are already accurate. This function only adds the
- * detailed path geometry for legs that don't have it yet.
+ * NOTE: planJourney() uses Haversine*1.25 estimates for walk legs during search.
+ * This function replaces those estimates with real ORS-routed distances, times,
+ * and street-level polyline geometry after the fast local search completes.
  *
  * Falls back silently to the original straight-line path on any API error.
  */

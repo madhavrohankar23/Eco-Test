@@ -22,10 +22,13 @@ function ForgotPasswordComponent() {
 
     try {
       const result = await resetPassword(email.trim());
-      if (result && result.error) throw result.error;
+      if (result && typeof result === "object" && "error" in result && result.error) {
+        throw result.error;
+      }
       setIsSuccess(true);
-    } catch (err: any) {
-      setError(err.message || "Failed to send password reset email.");
+    } catch (err) {
+      const msg = err && typeof err === "object" && "message" in err ? String(err.message) : undefined;
+      setError(msg || "Failed to send password reset email.");
     } finally {
       setIsLoading(false);
     }

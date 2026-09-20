@@ -1,4 +1,4 @@
-﻿import React, { useState } from "react";
+import React, { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Mail, Lock, User, CheckCircle2, Circle, AlertCircle, Loader2, Eye, EyeOff, Leaf, Phone, ArrowRight, Sparkles } from "lucide-react";
 import { useAuth, DEMO_CREDENTIALS } from "../context/AuthContext";
@@ -36,7 +36,7 @@ function SignupComponent() {
     try {
       loginAsDemoUser();
       navigate({ to: "/app" });
-    } catch (err: any) {
+    } catch {
       setError("Demo access error");
     } finally {
       setIsLoading(false);
@@ -85,7 +85,7 @@ function SignupComponent() {
         formData.mobile.trim()
       );
 
-      if (result?.error) {
+      if (result && typeof result === "object" && "error" in result && result.error) {
         throw result.error;
       }
 
@@ -97,8 +97,9 @@ function SignupComponent() {
         to: "/login",
         search: { registered: "true", email: formData.email.trim() },
       });
-    } catch (err: any) {
-      setError(err.message || "Registration failed. Please try again or use the Demo Account.");
+    } catch (err) {
+      const msg = err && typeof err === "object" && "message" in err ? String(err.message) : undefined;
+      setError(msg || "Registration failed. Please try again or use the Demo Account.");
     } finally {
       setIsLoading(false);
     }
@@ -175,9 +176,12 @@ function SignupComponent() {
               setError("");
               try {
                 const result = await signInWithGoogle();
-                if (result?.error) throw result.error;
-              } catch (err: any) {
-                setError(err.message || "Failed to sign up with Google.");
+                if (result && typeof result === "object" && "error" in result && result.error) {
+                  throw result.error;
+                }
+              } catch (err) {
+                const msg = err && typeof err === "object" && "message" in err ? String(err.message) : undefined;
+                setError(msg || "Failed to sign up with Google.");
                 setIsLoading(false);
               }
             }}
