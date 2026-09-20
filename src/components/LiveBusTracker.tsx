@@ -16,15 +16,15 @@ import {
   searchLiveBusRoutes,
   formatLiveEta,
   formatLiveEtaShort,
-  getBusRouteTimetable,
+  fetchLiveRouteDetails,
   type LiveBusRoute,
   type LiveBusStop,
   type LiveRouteTelemetry,
   type BusTimetableInfo,
 } from "@/lib/liveBus";
 
-// Popular bus numbers in Nagpur (including 135)
-const POPULAR_BUSES = ["1", "5", "10", "12", "16", "24", "72", "135", "176"];
+// Popular bus numbers in Nagpur (including 100 and 135)
+const POPULAR_BUSES = ["1", "5", "10", "12", "16", "24", "72", "100", "135", "176"];
 
 interface LiveBusTrackerProps {
   selectedRoute: LiveBusRoute | null;
@@ -49,6 +49,7 @@ export default function LiveBusTracker({
 }: LiveBusTrackerProps) {
   const [query, setQuery] = useState("");
   const [showTimetable, setShowTimetable] = useState(false);
+  const [liveTimetable, setLiveTimetable] = useState<BusTimetableInfo | null>(null);
 
   const filteredRoutes = useMemo(() => {
     return searchLiveBusRoutes(query, 50);
@@ -58,15 +59,34 @@ export default function LiveBusTracker({
   useEffect(() => {
     onSelectStop(null);
     setShowTimetable(false);
+    setLiveTimetable(null);
+
+    if (!selectedRoute) return;
+
+    let isSubscribed = true;
+    const loadTimetable = async () => {
+      const rid = selectedRoute.route_id;
+      try {
+        const details = await fetchLiveRouteDetails(rid);
+        if (details?.timetable && isSubscribed) {
+          setLiveTimetable(details.timetable);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void loadTimetable();
+    return () => {
+      isSubscribed = false;
+    };
   }, [selectedRoute, onSelectStop]);
 
   const activeVehiclesCount = telemetry?.vehicles?.length ?? 0;
 
-  // Retrieve scheduled timetable for selected route
+  // Retrieve scheduled timetable for selected route from Chalo live scheduler
   const timetableInfo = useMemo<BusTimetableInfo | null>(() => {
-    if (!selectedRoute) return null;
-    return getBusRouteTimetable(selectedRoute.route_name);
-  }, [selectedRoute]);
+    return liveTimetable;
+  }, [liveTimetable]);
 
   // Find next upcoming scheduled departure
   const nextDeparture = useMemo(() => {
@@ -139,7 +159,7 @@ export default function LiveBusTracker({
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search Bus No (e.g. 135, 1, 72) or Stop / Terminal..."
+              placeholder="Search Bus No (e.g. 100, 135, 1, 72) or Stop / Terminal..."
               className="w-full rounded-2xl border border-border bg-white py-2.5 pl-9 pr-9 text-xs font-medium text-foreground placeholder:text-muted-foreground shadow-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:bg-card"
             />
             {query && (
@@ -191,7 +211,7 @@ export default function LiveBusTracker({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="rounded-lg bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
-                        BUS {route.bus_number}
+                        BUS {route.display_bus_number || route.bus_number}
                       </span>
                       <span className="text-[10px] font-medium text-muted-foreground">
                         {route.stopsCount} stops
@@ -220,7 +240,7 @@ export default function LiveBusTracker({
                   <Bus className="mx-auto size-6 text-muted-foreground/40" />
                   <p className="mt-2 font-semibold">No bus route found for &quot;{query}&quot;</p>
                   <p className="mt-0.5 text-[10px]">
-                    Try searching by bus number (e.g. 135, 1, 5, 72) or terminal name.
+                    Try searching by bus number (e.g. 100, 135, 1, 5, 72) or terminal name.
                   </p>
                 </div>
               )}
@@ -236,7 +256,7 @@ export default function LiveBusTracker({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="rounded-lg bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
-                    BUS {selectedRoute.bus_number}
+                    BUS {selectedRoute.display_bus_number || selectedRoute.bus_number}
                   </span>
                   <span
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
