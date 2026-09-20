@@ -50,12 +50,18 @@ function Fit({ journey }: { journey: Journey | null }) {
   return null;
 }
 
-/** Smoothly fly to the user's GPS position when it's first acquired. */
-function FlyToLocation({ pos }: { pos: { lat: number; lon: number } }) {
+/** Smoothly fly to the position and adjust zoom level when radius changes. */
+function FlyToLocation({ pos, radiusM }: { pos: { lat: number; lon: number }; radiusM?: number }) {
   const map = useMap();
   useEffect(() => {
-    map.flyTo([pos.lat, pos.lon], Math.max(map.getZoom(), 15), { duration: 1.2 });
-  }, [pos.lat, pos.lon, map]);
+    let targetZoom = 15;
+    if (radiusM) {
+      if (radiusM >= 5000) targetZoom = 12;
+      else if (radiusM >= 2500) targetZoom = 13;
+      else targetZoom = 14;
+    }
+    map.flyTo([pos.lat, pos.lon], targetZoom, { duration: 1.0 });
+  }, [pos.lat, pos.lon, radiusM, map]);
   return null;
 }
 
@@ -321,7 +327,7 @@ export default function MapView({
           >
             <Tooltip permanent={false}>{nearbyAnchor.name}</Tooltip>
           </CircleMarker>
-          <FlyToLocation pos={nearbyAnchor} />
+          <FlyToLocation pos={nearbyAnchor} radiusM={nearbyRadiusM} />
         </>
       )}
 

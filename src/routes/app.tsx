@@ -1933,19 +1933,19 @@ function Planner() {
             }
           >
             <MapView
-              journey={journey}
-              origin={origin}
-              destination={destination}
+              journey={activeRailItem === "directions" ? journey : null}
+              origin={activeRailItem === "directions" ? origin : null}
+              destination={activeRailItem === "directions" ? destination : null}
               showNetwork={showNetwork}
-              showBusStops={showBusStops}
-              showMetroStations={showMetroStations}
-              picking={picking}
+              showBusStops={showBusStops && activeRailItem === "directions"}
+              showMetroStations={showMetroStations && activeRailItem === "directions"}
+              picking={activeRailItem === "directions" ? picking : null}
               onMapClick={handleMapClick}
               isCurrentLocation={origin?.name === "Your location"}
               nearbyMode={cardOpen && activeRailItem === "nearby"}
-              nearbyAnchor={nearbyAnchor}
+              nearbyAnchor={activeRailItem === "nearby" ? nearbyAnchor : null}
               nearbyRadiusM={nearbyRadiusM}
-              nearbyMarkers={nearbyMarkers}
+              nearbyMarkers={activeRailItem === "nearby" ? nearbyMarkers : []}
             />
           </Suspense>
         ) : (
