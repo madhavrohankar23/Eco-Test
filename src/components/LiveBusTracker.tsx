@@ -11,6 +11,7 @@ import {
   X,
   Compass,
   Calendar,
+  ArrowLeftRight,
 } from "lucide-react";
 import {
   searchLiveBusRoutes,
@@ -24,7 +25,7 @@ import {
 } from "@/lib/liveBus";
 
 // Popular bus numbers in Nagpur (including 100 and 135)
-const POPULAR_BUSES = ["1", "5", "10", "12", "16", "24", "72", "100", "135", "176"];
+const POPULAR_BUSES = ["1", "28", "35", "43", "46", "75", "113", "100", "135", "176"];
 
 interface LiveBusTrackerProps {
   selectedRoute: LiveBusRoute | null;
@@ -134,19 +135,6 @@ export default function LiveBusTracker({
             </p>
           </div>
         </div>
-
-        {selectedRoute && (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={onManualRefresh}
-              title="Refresh GPS now"
-              className="flex items-center gap-1 rounded-xl bg-secondary/80 px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:bg-secondary active:scale-95"
-            >
-              <RefreshCw className={`size-3 text-indigo-500 ${isPolling ? "animate-spin" : ""}`} />
-              <span>{refreshSecondsRemaining}s</span>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* ── 2. Route Search & Selector (When no route selected) ── */}
@@ -252,47 +240,66 @@ export default function LiveBusTracker({
         <div className="space-y-3">
           {/* Active Route Header Card */}
           <div className="rounded-2xl border border-indigo-500/30 bg-white p-3.5 shadow-sm dark:bg-card">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="rounded-lg bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white shadow-xs">
-                    BUS {selectedRoute.display_bus_number || selectedRoute.bus_number}
-                  </span>
+            {/* Top Bar: Route Badges (Left) & Controls (Right: Refresh + Switch Route) */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 pb-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="rounded-lg bg-indigo-600 px-2.5 py-0.5 text-[11px] font-bold text-white shadow-xs">
+                  Bus {selectedRoute.display_bus_number || selectedRoute.bus_number}
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                    activeVehiclesCount > 0
+                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                      : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                  }`}
+                >
                   <span
-                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                      activeVehiclesCount > 0
-                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400"
-                        : "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400"
+                    className={`size-1.5 rounded-full ${
+                      activeVehiclesCount > 0 ? "bg-emerald-500 animate-ping" : "bg-amber-500"
                     }`}
-                  >
-                    <span
-                      className={`size-1.5 rounded-full ${
-                        activeVehiclesCount > 0 ? "bg-emerald-500 animate-ping" : "bg-amber-500"
-                      }`}
-                    />
-                    {activeVehiclesCount > 0
-                      ? `${activeVehiclesCount} Bus${activeVehiclesCount > 1 ? "es" : ""} Live`
-                      : "No Live Bus on Route"}
-                  </span>
-                </div>
-
-                <h3 className="mt-1.5 text-xs font-bold text-foreground">
-                  {selectedRoute.route_name}
-                </h3>
-
-                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span className="truncate">{selectedRoute.from_terminal}</span>
-                  <ArrowRight className="size-2.5 shrink-0" />
-                  <span className="truncate">{selectedRoute.to_terminal}</span>
-                </div>
+                  />
+                  {activeVehiclesCount > 0
+                    ? `${activeVehiclesCount} Bus${activeVehiclesCount > 1 ? "es" : ""} Live`
+                    : "No Live Bus on Route"}
+                </span>
               </div>
 
-              <button
-                onClick={() => onSelectRoute(null)}
-                className="rounded-xl border border-border bg-secondary/60 px-2.5 py-1 text-[11px] font-semibold text-muted-foreground transition hover:bg-secondary hover:text-foreground active:scale-95"
-              >
-                Change
-              </button>
+              <div className="flex items-center gap-1.5">
+                {/* Relocated Refresh Countdown Button */}
+                <button
+                  onClick={onManualRefresh}
+                  title="Click to refresh live GPS immediately (Auto-updates every 5s)"
+                  aria-label="Refresh live bus GPS data"
+                  className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-100 active:scale-95 dark:border-indigo-800/80 dark:bg-indigo-950/60 dark:text-indigo-300 dark:hover:bg-indigo-900 shadow-2xs"
+                >
+                  <RefreshCw className={`size-3 text-indigo-600 dark:text-indigo-400 ${isPolling ? "animate-spin" : ""}`} />
+                  <span className="font-mono text-[10px]">{refreshSecondsRemaining}s</span>
+                </button>
+
+                {/* Accessible and Visually Distinct Switch Route Action */}
+                <button
+                  onClick={() => onSelectRoute(null)}
+                  title="Close"
+                  aria-label="X"
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-800 transition hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700 active:scale-95 dark:border-border dark:bg-secondary dark:text-slate-200 dark:hover:border-indigo-600 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-300 shadow-2xs"
+                >
+                  <X className="size-4 text-black-600 dark:text-indigo-400" />
+                  {/* <span>X</span> */}
+                </button>
+              </div>
+            </div>
+
+            {/* Route Name & Terminals */}
+            <div className="mt-2.5">
+              <h3 className="text-xs font-bold text-foreground">
+                {selectedRoute.route_name}
+              </h3>
+
+              <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className="truncate">{selectedRoute.from_terminal}</span>
+                <ArrowRight className="size-2.5 shrink-0" />
+                <span className="truncate">{selectedRoute.to_terminal}</span>
+              </div>
             </div>
 
             {/* Active Vehicle Numbers Badge Bar */}
@@ -483,7 +490,7 @@ export default function LiveBusTracker({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
               <span>Route Stops ({selectedRoute.stopsCount})</span>
-              <span className="text-[10px] lowercase font-normal">tap stop to check ETA</span>
+              <span className="text-[10px] lowercase font-normal">Tap stop to check ETA</span>
             </div>
 
             <div className="max-h-[calc(100vh-380px)] space-y-1 overflow-y-auto pr-0.5">

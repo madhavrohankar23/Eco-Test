@@ -675,11 +675,12 @@ function Planner() {
   const [nearbyLocError, setNearbyLocError] = useState<string | null>(null);
 
   // Live Bus Tracking state (powered by Chalo API)
+  const LIVE_BUS_REFRESH_INTERVAL_SEC = 5; // <--- Change this number to adjust auto-refresh seconds (e.g. 5, 10, 15)
   const [selectedLiveRoute, setSelectedLiveRoute] = useState<LiveBusRoute | null>(null);
   const [liveTelemetry, setLiveTelemetry] = useState<LiveRouteTelemetry | null>(null);
   const [selectedLiveStop, setSelectedLiveStop] = useState<LiveBusStop | null>(null);
   const [isLivePolling, setIsLivePolling] = useState(false);
-  const [liveRefreshCountdown, setLiveRefreshCountdown] = useState(7);
+  const [liveRefreshCountdown, setLiveRefreshCountdown] = useState(LIVE_BUS_REFRESH_INTERVAL_SEC);
 
   // Dynamically enrich selectedLiveRoute with Chalo's real-time stop coordinates and road polyline
   useEffect(() => {
@@ -717,11 +718,11 @@ function Planner() {
     };
   }, [selectedLiveRoute]);
 
-  // 7-second auto-refresh polling for Live Bus Tracking
+  // Auto-refresh polling for Live Bus Tracking
   useEffect(() => {
     if (activeRailItem !== "live" || !selectedLiveRoute) {
       setLiveTelemetry(null);
-      setLiveRefreshCountdown(7);
+      setLiveRefreshCountdown(LIVE_BUS_REFRESH_INTERVAL_SEC);
       return;
     }
 
@@ -735,7 +736,7 @@ function Planner() {
         const data = await fetchLiveRouteInfo(selectedLiveRoute.route_id, stopIds);
         if (isSubscribed) {
           setLiveTelemetry(data);
-          setLiveRefreshCountdown(7);
+          setLiveRefreshCountdown(LIVE_BUS_REFRESH_INTERVAL_SEC);
         }
       } finally {
         if (isSubscribed) setIsLivePolling(false);
@@ -745,12 +746,12 @@ function Planner() {
     // Initial fetch immediately
     void poll();
 
-    // 1-second countdown interval with 7-second polling cycle
+    // 1-second countdown interval with auto-refresh polling cycle
     const interval = setInterval(() => {
       setLiveRefreshCountdown((prev) => {
         if (prev <= 1) {
           void poll();
-          return 7;
+          return LIVE_BUS_REFRESH_INTERVAL_SEC;
         }
         return prev - 1;
       });
@@ -769,7 +770,7 @@ function Planner() {
       const stopIds = selectedLiveRoute.stops.map((s) => s.stop_id);
       const data = await fetchLiveRouteInfo(selectedLiveRoute.route_id, stopIds);
       setLiveTelemetry(data);
-      setLiveRefreshCountdown(7);
+      setLiveRefreshCountdown(LIVE_BUS_REFRESH_INTERVAL_SEC);
     } finally {
       setIsLivePolling(false);
     }
