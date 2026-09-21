@@ -4,6 +4,7 @@ import {
   Building2,
   Bus,
   Compass,
+  Crosshair,
   GraduationCap,
   Hospital,
   Hotel,
@@ -20,6 +21,7 @@ import {
 import {
   searchLocalPlaces,
   searchOnlinePlaces,
+  parseCoordinateInput,
   type UnifiedPlaceResult,
 } from "@/lib/placesSearch";
 
@@ -30,6 +32,14 @@ export interface Point {
 }
 
 function PlaceIcon({ place }: { place: UnifiedPlaceResult }) {
+  if (place.kind === "coord") {
+    return (
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-600 shadow-xs dark:text-emerald-400">
+        <Crosshair className="size-4" />
+      </div>
+    );
+  }
+
   if (place.kind === "metro") {
     const isBlue = (place.lineName ?? place.name).toLowerCase().includes("blue");
     return (
@@ -134,13 +144,14 @@ export default function PlaceSearch({
   const [isSearchingOnline, setIsSearchingOnline] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Synchronous instant local results (POIs + bus stops + metro stations)
+  // Synchronous instant local results (POIs + bus stops + metro stations + parsed coords)
   const localResults = useMemo<UnifiedPlaceResult[]>(() => searchLocalPlaces(q, 8), [q]);
+  const parsedCoord = useMemo(() => parseCoordinateInput(q), [q]);
 
   // Debounced live online geocoding
   useEffect(() => {
     const trimmed = q.trim();
-    if (trimmed.length < 2) {
+    if (trimmed.length < 2 || parsedCoord) {
       setOnlineResults([]);
       setIsSearchingOnline(false);
       return;
@@ -161,7 +172,7 @@ export default function PlaceSearch({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [q]);
+  }, [q, parsedCoord]);
 
   // Merge and deduplicate local + online results
   const combinedResults = useMemo<UnifiedPlaceResult[]>(() => {
@@ -179,11 +190,21 @@ export default function PlaceSearch({
   }, [localResults, onlineResults]);
 
   const activePlaceholder = isPickingMap
-    ? "Type a place or click anywhere on the map…"
-    : placeholder;
+    ? "Type place or coordinates (e.g. 21.1458, 79.0882)…"
+    : `${placeholder} (or enter lat, lon)`;
 
   const handleSelect = (item: UnifiedPlaceResult) => {
     onChange({ lat: item.lat, lon: item.lon, name: item.name });
+    setQ("");
+    setOpen(false);
+  };
+
+  const handleSelectCoordinate = (coords: { lat: number; lon: number; formatted: string }) => {
+    onChange({
+      lat: coords.lat,
+      lon: coords.lon,
+      name: `Location (${coords.formatted})`,
+    });
     setQ("");
     setOpen(false);
   };
@@ -192,6 +213,18 @@ export default function PlaceSearch({
     setQ("");
     onChange(null);
     inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      if (parsedCoord) {
+        e.preventDefault();
+        handleSelectCoordinate(parsedCoord);
+      } else if (combinedResults.length > 0 && combinedResults[0]) {
+        e.preventDefault();
+        handleSelect(combinedResults[0]);
+      }
+    }
   };
 
   return (
@@ -208,6 +241,8 @@ export default function PlaceSearch({
           className={`pl-8 pr-14 transition-all rounded-xl border-border bg-white text-xs font-medium dark:bg-card ${
             isPickingMap
               ? "ring-2 ring-primary/40 ring-offset-0 focus-visible:ring-primary/60"
+              : parsedCoord
+              ? "border-emerald-500 ring-2 ring-emerald-500/20"
               : "hover:border-primary/40"
           }`}
           placeholder={activePlaceholder}
@@ -217,6 +252,7 @@ export default function PlaceSearch({
             setOpen(true);
             if (value) onChange(null);
           }}
+          onKeyDown={handleKeyDown}
           onFocus={() => {
             setOpen(true);
             onFocus?.();
@@ -224,8 +260,18 @@ export default function PlaceSearch({
           onBlur={() => window.setTimeout(() => setOpen(false), 200)}
         />
 
-        {/* Right action icons (Clear button & Online search spinner) */}
+        {/* Right action icons (Clear button, Coordinate badge, & Online search spinner) */}
         <div className="absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
+          {parsedCoord && (
+            <span
+              title="Coordinates detected"
+              className="flex items-center gap-0.5 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+            >
+              <Crosshair className="size-2.5" />
+              <span>GPS</span>
+            </span>
+          )}
+
           {isSearchingOnline && (
             <Loader2 className="size-3.5 animate-spin text-primary opacity-80" />
           )}
@@ -252,8 +298,35 @@ export default function PlaceSearch({
       {/* ── Google Maps Style Autocomplete Dropdown ── */}
       {open && !value && (
         <div className="absolute left-0 right-0 z-[1005] mt-1.5 max-h-72 overflow-y-auto rounded-2xl border border-border/80 bg-white/98 p-1.5 shadow-2xl backdrop-blur-md dark:bg-popover/98 animate-in fade-in zoom-in-95">
-          {/* 1. "Your location" Recommendation at FIRST of dropdown list */}
-          {onLocate && (
+          {/* 1. Parsed Coordinate Direct Action Item */}
+          {parsedCoord && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleSelectCoordinate(parsedCoord)}
+              className="flex w-full items-center gap-2.5 rounded-xl p-2 text-left transition bg-emerald-500/10 hover:bg-emerald-500/20 group active:scale-[0.99] border border-emerald-500/30 mb-1.5 shadow-xs"
+            >
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-xs">
+                <Crosshair className="size-4 animate-pulse" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-emerald-800 dark:text-emerald-300">
+                    Use Exact Coordinates: {parsedCoord.formatted}
+                  </span>
+                  <span className="text-[9px] font-extrabold text-white bg-emerald-600 px-1.5 py-0.5 rounded shadow-2xs">
+                    Press Enter ↵
+                  </span>
+                </div>
+                <p className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 font-medium mt-0.5">
+                  Lat: {parsedCoord.lat}, Lon: {parsedCoord.lon} • Tap to set as point
+                </p>
+              </div>
+            </button>
+          )}
+
+          {/* 2. "Your location" Recommendation */}
+          {onLocate && !parsedCoord && (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
@@ -290,7 +363,7 @@ export default function PlaceSearch({
           <div className="flex items-center justify-between px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground border-b border-border/30 pb-1">
             <span className="flex items-center gap-1">
               <Sparkles className="size-3 text-primary" />
-              Suggested Places in Nagpur
+              {parsedCoord ? "Coordinate Match" : "Suggested Places or Coordinates"}
             </span>
             {isSearchingOnline && (
               <span className="flex items-center gap-1 text-[9px] lowercase font-normal">
@@ -299,11 +372,11 @@ export default function PlaceSearch({
             )}
           </div>
 
-          {combinedResults.length === 0 && !isSearchingOnline && (
+          {combinedResults.length === 0 && !isSearchingOnline && !parsedCoord && (
             <div className="px-4 py-4 text-center text-xs text-muted-foreground">
               <MapPin className="mx-auto size-4 text-muted-foreground/50 mb-1" />
-              <p className="font-semibold text-foreground">No matching places found</p>
-              <p className="text-[10px] mt-0.5">Try searching a landmark, college, resort or tap the map</p>
+              <p className="font-semibold text-foreground">No matching places or coordinates</p>
+              <p className="text-[10px] mt-0.5">Enter place name or paste coordinates like "21.1458, 79.0882"</p>
             </div>
           )}
 
