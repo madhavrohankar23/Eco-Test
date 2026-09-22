@@ -7,13 +7,43 @@ export interface UnifiedPlaceResult {
   subtitle: string;
   lat: number;
   lon: number;
-  kind: "metro" | "bus" | "poi" | "online";
+  kind: "metro" | "bus" | "poi" | "online" | "coord";
   categoryLabel?: string | undefined;
   lineName?: string | undefined;
 }
 
 // In-memory cache for live online geocoded search queries
 const onlineCache = new Map<string, UnifiedPlaceResult[]>();
+
+/**
+ * Parses coordinate strings like:
+ * - "21.1458, 79.0882"
+ * - "21.1458,79.0882"
+ * - "21.1458 79.0882"
+ * - "lat: 21.100795, lon: 78.990315"
+ * - "21.1458° N, 79.0882° E"
+ */
+export function parseCoordinateInput(input: string): { lat: number; lon: number; formatted: string } | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const coordRegex = /^\s*(?:lat(?:itude)?[:\s]*)?([+-]?\d+(?:\.\d+)?)\s*(?:°?\s*[NSns])?[,\s]+(?:lon(?:gitude)?[:\s]*)?([+-]?\d+(?:\.\d+)?)\s*(?:°?\s*[EWew])?\s*$/i;
+  const match = trimmed.match(coordRegex);
+  if (!match) return null;
+
+  const lat = parseFloat(match[1] || "");
+  const lon = parseFloat(match[2] || "");
+  if (isNaN(lat) || isNaN(lon)) return null;
+
+  if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+    return {
+      lat,
+      lon,
+      formatted: `${lat.toFixed(5)}, ${lon.toFixed(5)}`,
+    };
+  }
+  return null;
+}
 
 /**
  * Fast synchronous search across transit stops and curated Nagpur POIs.
@@ -24,6 +54,20 @@ export function searchLocalPlaces(q: string, limit = 8): UnifiedPlaceResult[] {
 
   const results: UnifiedPlaceResult[] = [];
   const seenNames = new Set<string>();
+
+  // Check if query is exact coordinates
+  const parsedCoord = parseCoordinateInput(q);
+  if (parsedCoord) {
+    results.push({
+      id: `coord_${parsedCoord.lat}_${parsedCoord.lon}`,
+      name: `Coordinates (${parsedCoord.formatted})`,
+      subtitle: `Exact GPS Location [Latitude: ${parsedCoord.lat}, Longitude: ${parsedCoord.lon}]`,
+      lat: parsedCoord.lat,
+      lon: parsedCoord.lon,
+      kind: "coord",
+      categoryLabel: "GPS Coords",
+    });
+  }
 
   // 1. Search curated Nagpur POIs (resorts, malls, lakes, colleges, etc.)
   for (const poi of NAGPUR_POIS) {
@@ -86,9 +130,11 @@ export function searchLocalPlaces(q: string, limit = 8): UnifiedPlaceResult[] {
     }
   }
 
-  // Sort by prefix match priority
+  // Sort by prefix match priority (coords always first)
   return results
     .sort((a, b) => {
+      if (a.kind === "coord") return -1;
+      if (b.kind === "coord") return 1;
       const aStarts = a.name.toLowerCase().startsWith(query) ? 0 : 1;
       const bStarts = b.name.toLowerCase().startsWith(query) ? 0 : 1;
       if (aStarts !== bStarts) return aStarts - bStarts;
@@ -107,6 +153,9 @@ export async function searchOnlinePlaces(
 ): Promise<UnifiedPlaceResult[]> {
   const query = q.trim();
   if (query.length < 2) return [];
+
+  // If query is valid coordinate, no need for geocoder query
+  if (parseCoordinateInput(query)) return [];
 
   const cacheKey = query.toLowerCase();
   if (onlineCache.has(cacheKey)) {
@@ -152,13 +201,10 @@ export async function searchOnlinePlaces(
       const name = p.name || p.street || query;
       const nameLower = name.toLowerCase();
 
-      // Dedup by name+coordinates: two distinct places with the same name (e.g. two
-      // 'Sitabuldi' stops at different locations) should both appear in results.
       const dedupKey = nameLower + "|" + lat.toFixed(3) + "|" + lon.toFixed(3);
       if (seenNames.has(dedupKey)) continue;
       seenNames.add(dedupKey);
 
-      // Build readable subtitle (e.g. "Dharampeth, Nagpur, Maharashtra")
       const parts = [p.street, p.locality, p.city || "Nagpur", p.state]
         .filter(Boolean)
         .filter((val, idx, arr) => arr.indexOf(val) === idx && val !== name);
@@ -181,7 +227,6 @@ export async function searchOnlinePlaces(
       });
     }
 
-    // Cap cache to 50 entries to avoid unbounded memory growth in long sessions
     if (onlineCache.size >= 50) {
       const firstKey = onlineCache.keys().next().value;
       if (firstKey !== undefined) onlineCache.delete(firstKey);

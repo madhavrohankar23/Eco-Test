@@ -19,15 +19,13 @@ import { allLines, busStops, metroStations } from "@/lib/routing";
 import type { NearbyStop } from "@/lib/nearby";
 import type { LiveBusRoute, LiveRouteTelemetry, LiveBusStop } from "@/lib/liveBus";
 import { formatLiveEta } from "@/lib/liveBus";
+import type { UberNearbyVehicle } from "@/lib/uberApi";
 
 const MODE_COLOR: Record<string, string> = {
   walk: "#64748b",
   bus: "#0d9488",
   metro: "#e07a1f", // fallback only
 };
-
-
-
 
 /**
  * Nagpur Metro brand colours per line name.
@@ -103,7 +101,7 @@ function ClickHandler({
   return null;
 }
 
-/** Creates a live bus vehicle marker with exact uploaded transit bus icon (image.svg), light blue pin background, and registration badge */
+/** Creates a live bus vehicle marker with exact transit bus icon, light blue pin background, and registration badge */
 function createLiveBusIcon(vNo: string, isHalted: boolean) {
   return L.divIcon({
     className: "live-bus-vehicle-divicon",
@@ -136,6 +134,194 @@ function createLiveBusIcon(vNo: string, isHalted: boolean) {
   });
 }
 
+/** Creates a live Uber vehicle marker matching Uber's top-down 2D rotating icons */
+function createUberVehicleIcon(vehicle: UberNearbyVehicle) {
+  const defaultIcon = "https://d1a3f4spazzrp4.cloudfront.net/car-types/mapIconsStandard/car_go_2d.png";
+  const iconSrc = vehicle.mapImageUrl || defaultIcon;
+
+  // Fallback SVG in case CDN image fails or takes time to load
+  const fallbackSvg =
+    vehicle.vehicleCategory === "auto"
+      ? `<svg width="26" height="26" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="9" y="4" width="14" height="24" rx="5" fill="#facc15" stroke="#166534" stroke-width="2"/><rect x="11" y="8" width="10" height="6" rx="2" fill="#166534"/><circle cx="16" cy="24" r="2.5" fill="#1e293b"/></svg>`
+      : vehicle.vehicleCategory === "bike"
+      ? `<svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="14" y="3" width="4" height="26" rx="2" fill="#0f172a"/><circle cx="16" cy="14" r="4.5" fill="#0284c7"/><rect x="8" y="7" width="16" height="3" rx="1.5" fill="#475569"/></svg>`
+      : `<svg width="26" height="26" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="3" width="16" height="26" rx="5" fill="#0f172a" stroke="#ffffff" stroke-width="1.5"/><rect x="10" y="8" width="12" height="7" rx="2" fill="#64748b"/><rect x="11" y="20" width="10" height="5" rx="1.5" fill="#334155"/></svg>`;
+
+  return L.divIcon({
+    className: "uber-vehicle-2d-divicon",
+    html: `
+      <div style="position: relative; display: flex; align-items: center; justify-content: center; pointer-events: auto;">
+        <div style="
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transform: rotate(${vehicle.bearing}deg);
+          transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+          filter: drop-shadow(0 2px 4px rgba(0,0,0,0.32));
+        ">
+          <img
+            src="${iconSrc}"
+            alt="Uber Vehicle"
+            loading="eager"
+            decoding="async"
+            style="width: 28px; height: 28px; object-fit: contain;"
+            onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
+          />
+          <div style="display: none; width: 28px; height: 28px; align-items: center; justify-content: center;">
+            ${fallbackSvg}
+          </div>
+        </div>
+      </div>
+    `,
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
+
+/** Creates Uber-style Pickup & Destination Label Banners on Map */
+function createUberPickupIcon(etaMin?: number, locationName?: string) {
+  const label = locationName ? `From ${locationName}` : "Pickup location";
+  const etaText = `${etaMin || 3} min`;
+
+  return L.divIcon({
+    className: "uber-pickup-pin-divicon",
+    html: `
+      <div style="position: relative; display: flex; flex-direction: column; align-items: center; transform: translate(-50%, -100%);">
+        <div style="
+          display: flex;
+          align-items: center;
+          background: #ffffff;
+          border-radius: 8px;
+          padding: 4px 8px;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+          border: 1px solid rgba(0,0,0,0.08);
+          font-family: system-ui, sans-serif;
+          white-space: nowrap;
+          gap: 6px;
+        ">
+          <div style="
+            background: #000000;
+            color: #ffffff;
+            border-radius: 5px;
+            padding: 2px 5px;
+            font-size: 9.5px;
+            font-weight: 800;
+            line-height: 1;
+            text-align: center;
+          ">
+            ${etaText}
+          </div>
+          <span style="font-size: 11px; font-weight: 700; color: #111827; max-width: 140px; overflow: hidden; text-overflow: ellipsis;">
+            ${label}
+          </span>
+          <span style="font-size: 10px; font-weight: 900; color: #6b7280;">›</span>
+        </div>
+        <div style="
+          width: 8px;
+          height: 8px;
+          background: #000000;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+          margin-top: 2px;
+        "></div>
+      </div>
+    `,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  });
+}
+
+function createUberDropoffIcon(locationName?: string) {
+  const label = locationName ? `To ${locationName}` : "Destination";
+
+  return L.divIcon({
+    className: "uber-dropoff-pin-divicon",
+    html: `
+      <div style="position: relative; display: flex; flex-direction: column; align-items: center; transform: translate(-50%, -100%);">
+        <div style="
+          display: flex;
+          align-items: center;
+          background: #ffffff;
+          border-radius: 8px;
+          padding: 5px 9px;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+          border: 1px solid rgba(0,0,0,0.08);
+          font-family: system-ui, sans-serif;
+          white-space: nowrap;
+          gap: 6px;
+        ">
+          <span style="font-size: 11px; font-weight: 700; color: #111827; max-width: 150px; overflow: hidden; text-overflow: ellipsis;">
+            ${label}
+          </span>
+          <span style="font-size: 10px; font-weight: 900; color: #6b7280;">›</span>
+        </div>
+        <div style="
+          width: 8px;
+          height: 8px;
+          background: #000000;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+          margin-top: 2px;
+        "></div>
+      </div>
+    `,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+  });
+}
+
+function FitCabRoute({
+  origin,
+  destination,
+  polyline,
+}: {
+  origin?: { lat: number; lon: number } | null;
+  destination?: { lat: number; lon: number } | null;
+  polyline?: [number, number][];
+}) {
+  const map = useMap();
+  useEffect(() => {
+    try {
+      if (Array.isArray(polyline) && polyline.length >= 2) {
+        const valid = polyline.filter(
+          (p) => Array.isArray(p) && p.length >= 2 && typeof p[0] === "number" && !isNaN(p[0]) && typeof p[1] === "number" && !isNaN(p[1])
+        );
+        if (valid.length >= 2) {
+          map.fitBounds(valid, { padding: [50, 50], maxZoom: 16 });
+          return;
+        }
+      }
+      if (
+        origin &&
+        typeof origin.lat === "number" &&
+        !isNaN(origin.lat) &&
+        typeof origin.lon === "number" &&
+        !isNaN(origin.lon) &&
+        destination &&
+        typeof destination.lat === "number" &&
+        !isNaN(destination.lat) &&
+        typeof destination.lon === "number" &&
+        !isNaN(destination.lon)
+      ) {
+        if (Math.abs(origin.lat - destination.lat) > 0.0001 || Math.abs(origin.lon - destination.lon) > 0.0001) {
+          map.fitBounds(
+            [
+              [origin.lat, origin.lon],
+              [destination.lat, destination.lon],
+            ],
+            { padding: [50, 50], maxZoom: 15 }
+          );
+        } else {
+          map.setView([origin.lat, origin.lon], 15);
+        }
+      }
+    } catch (e) {
+      console.warn("Leaflet fitBounds error prevented:", e);
+    }
+  }, [origin?.lat, origin?.lon, destination?.lat, destination?.lon, polyline, map]);
+  return null;
+}
+
 export default function MapView({
   journey,
   origin,
@@ -154,6 +340,12 @@ export default function MapView({
   liveTelemetry = null,
   selectedLiveStop = null,
   onSelectLiveStop,
+  nearbyCabs = [],
+  cabOrigin = null,
+  cabDestination = null,
+  cabPolyline = [],
+  cabOriginName,
+  cabDestinationName,
 }: {
   journey: Journey | null;
   origin?: { lat: number; lon: number } | null;
@@ -161,7 +353,7 @@ export default function MapView({
   showNetwork: boolean;
   showBusStops: boolean;
   showMetroStations: boolean;
-  picking?: "origin" | "destination" | null;
+  picking?: "origin" | "destination" | "cab_origin" | "cab_destination" | null;
   onMapClick?: ((p: { lat: number; lon: number }) => void) | undefined;
   /** When true, the origin pin is rendered as a pulsing blue GPS dot */
   isCurrentLocation?: boolean;
@@ -181,8 +373,20 @@ export default function MapView({
   selectedLiveStop?: LiveBusStop | null;
   /** Callback when a stop along the live bus route is tapped */
   onSelectLiveStop?: ((stop: LiveBusStop | null) => void) | undefined;
+  /** Standalone Uber cab options: nearby vehicle markers */
+  nearbyCabs?: UberNearbyVehicle[];
+  /** Standalone Uber cab options: pickup point */
+  cabOrigin?: { lat: number; lon: number } | null;
+  /** Standalone Uber cab options: dropoff point */
+  cabDestination?: { lat: number; lon: number } | null;
+  /** Standalone Uber cab options: decoded road polyline */
+  cabPolyline?: [number, number][];
+  /** Standalone Uber cab options: pickup name */
+  cabOriginName?: string | undefined;
+  /** Standalone Uber cab options: destination name */
+  cabDestinationName?: string | undefined;
 }) {
-    const cartoApiKey = (import.meta.env as Record<string, string | undefined>)["VITE_CARTO_API_KEY"] || "cb1_3m87_1_9a62d04449bdddc8bb5b8466";
+  const cartoApiKey = (import.meta.env as Record<string, string | undefined>)["VITE_CARTO_API_KEY"] || "cb1_3m87_1_9a62d04449bdddc8bb5b8466";
   const cartoTileUrl = cartoApiKey
     ? `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${cartoApiKey}`
     : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png";
@@ -204,14 +408,7 @@ export default function MapView({
         maxZoom={20}
       />
 
-      {/* <TileLayer
-        attribution='&copy; <a href="https://maps.google.com" target="_blank">Google Maps</a>'
-        url="https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
-        subdomains={["0", "1", "2", "3"]}
-        maxZoom={21}
-      /> */}
-
-            {/* Metro Line Polylines — ONLY shown when Metro toggle is clicked */}
+      {/* Metro Line Polylines — ONLY shown when Metro toggle is clicked */}
       {showMetroStations &&
         allLines
           .filter((l) => l.mode === "metro")
@@ -268,7 +465,6 @@ export default function MapView({
       {/* Metro station dots — colour matches their line */}
       {showMetroStations &&
         metroStations.map((s) => {
-          // Determine which metro line this station belongs to
           const parentLine = allLines.find(
             (l) => l.mode === "metro" && l.points.some((p: { lat: number; lon: number }) => p.lat === s.lat && p.lon === s.lon),
           );
@@ -305,43 +501,41 @@ export default function MapView({
       ))}
 
       {/* Active journey boarding and alighting stop markers */}
-        {journey?.legs
-          .filter((l) => l.mode !== "walk")
-          .flatMap((leg, li) => {
-            const startPt = leg.path[0];
-            const endPt = leg.path[leg.path.length - 1];
-            const pts = [
-              { pt: startPt, label: `Board: ${leg.from} (${leg.line ?? leg.mode})`, isStart: true },
-              { pt: endPt, label: `Alight: ${leg.to}`, isStart: false },
-            ].filter((x): x is { pt: { lat: number; lon: number }; label: string; isStart: boolean } => x.pt != null);
+      {journey?.legs
+        .filter((l) => l.mode !== "walk")
+        .flatMap((leg, li) => {
+          const startPt = leg.path[0];
+          const endPt = leg.path[leg.path.length - 1];
+          const pts = [
+            { pt: startPt, label: `Board: ${leg.from} (${leg.line ?? leg.mode})`, isStart: true },
+            { pt: endPt, label: `Alight: ${leg.to}`, isStart: false },
+          ].filter((x): x is { pt: { lat: number; lon: number }; label: string; isStart: boolean } => x.pt != null);
 
-            return pts.map(({ pt: p, label }, pi) => (
-              <CircleMarker
-                key={`stn-${li}-${pi}`}
-                center={[p.lat, p.lon]}
-                radius={6}
-                pathOptions={{
-                  color: leg.mode === "metro" ? lineColor("metro", leg.line ?? "") : MODE_COLOR[leg.mode]!,
-                  fillColor: "#ffffff",
-                  fillOpacity: 1,
-                  weight: 3,
-                }}
-              >
-                <Tooltip>{label}</Tooltip>
-              </CircleMarker>
-            ));
-          })}
+          return pts.map(({ pt: p, label }, pi) => (
+            <CircleMarker
+              key={`stn-${li}-${pi}`}
+              center={[p.lat, p.lon]}
+              radius={6}
+              pathOptions={{
+                color: leg.mode === "metro" ? lineColor("metro", leg.line ?? "") : MODE_COLOR[leg.mode]!,
+                fillColor: "#ffffff",
+                fillOpacity: 1,
+                weight: 3,
+              }}
+            >
+              <Tooltip>{label}</Tooltip>
+            </CircleMarker>
+          ));
+        })}
 
-        {/* Origin pin — blue pulsing dot for GPS location, dark dot otherwise */}
+      {/* Origin pin — blue pulsing dot for GPS location, dark dot otherwise */}
       {origin && isCurrentLocation && (
         <>
-          {/* Outer accuracy ring */}
           <CircleMarker
             center={[origin.lat, origin.lon]}
             radius={18}
             pathOptions={{ color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.12, weight: 0 }}
           />
-          {/* Blue GPS dot */}
           <CircleMarker
             center={[origin.lat, origin.lon]}
             radius={8}
@@ -476,7 +670,6 @@ export default function MapView({
               >
                 <Tooltip direction="top" offset={[0, -8]}>
                   <div className="font-sans text-slate-900 min-w-[150px] space-y-1">
-                    {/* Header: #47 BUS STOP */}
                     <div className="flex items-center gap-1.5">
                       <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-extrabold text-sky-800">
                         #{stop.stop_sequence}
@@ -486,12 +679,10 @@ export default function MapView({
                       </span>
                     </div>
 
-                    {/* Stop Name Title */}
                     <div className="text-xs font-bold leading-snug text-slate-900">
                       {stop.name}
                     </div>
 
-                    {/* Live Vehicle & ETA info */}
                     {primaryEta && primaryEta.etaSeconds >= 0 ? (
                       <div className="mt-1.5 rounded-lg border border-slate-200/80 bg-slate-50/80 p-1.5 text-xs">
                         <div className="flex items-center justify-between">
@@ -521,7 +712,7 @@ export default function MapView({
             );
           })}
 
-          {/* 3. Dedicated Chalo-style Popup Card for Selected Bus Stop */}
+          {/* 3. Dedicated Popup Card for Selected Bus Stop */}
           {selectedLiveStop && (
             <Popup
               key={`live-stop-popup-${selectedLiveStop.stop_id}-${selectedLiveStop.lat}-${selectedLiveStop.lon}`}
@@ -533,7 +724,6 @@ export default function MapView({
               }}
             >
               <div className="min-w-[210px] max-w-[260px] p-1 font-sans text-slate-900">
-                {/* Header: Stop Sequence & Title */}
                 <div className="border-b border-slate-100 pb-1.5">
                   <div className="flex items-center gap-1.5">
                     <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-extrabold text-sky-800">
@@ -548,7 +738,6 @@ export default function MapView({
                   </h4>
                 </div>
 
-                {/* Approaching Vehicles & ETAs (Exact Chalo Format) */}
                 {(() => {
                   const etas = liveTelemetry?.stopsEta?.[selectedLiveStop.stop_id];
                   if (etas && etas.length > 0) {
@@ -559,13 +748,11 @@ export default function MapView({
                             key={`eta-card-${etaItem.vNo}-${i}`}
                             className="rounded-xl border border-slate-200/90 bg-slate-50/70 p-2 text-xs shadow-2xs"
                           >
-                            {/* Vehicle Pill */}
                             <div className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1 font-mono text-xs font-bold text-slate-800 shadow-2xs">
                               <span className="text-xs">🚌</span>
                               <span>{etaItem.vNo}</span>
                             </div>
 
-                            {/* Chalo Live Signal & ETA */}
                             <div className="mt-1.5 flex items-center justify-between">
                               <div className="flex items-center gap-1.5 font-bold text-sky-600">
                                 <span className="text-xs font-extrabold">((•</span>
@@ -601,7 +788,7 @@ export default function MapView({
             </Popup>
           )}
 
-          {/* 3. Live Moving Bus Vehicle Markers from Chalo Telemetry */}
+          {/* 4. Live Moving Bus Vehicle Markers */}
           {liveTelemetry?.vehicles?.map((v) => (
             <Marker
               key={`live-v-${v.vehicleId}`}
@@ -628,6 +815,89 @@ export default function MapView({
           <FlyToLiveStop stop={selectedLiveStop} />
         </>
       )}
+
+      {/* ── Standalone Uber Cab Options Layer (Live 2D Top-Down Moving Vehicles) ── */}
+      {nearbyCabs && nearbyCabs.length > 0 && (
+        <>
+          {nearbyCabs
+            .filter(
+              (v) =>
+                typeof v?.coordinate?.latitude === "number" &&
+                !isNaN(v.coordinate.latitude) &&
+                typeof v?.coordinate?.longitude === "number" &&
+                !isNaN(v.coordinate.longitude)
+            )
+            .map((v) => (
+              <Marker
+                key={`uber-v-${v.id}`}
+                position={[v.coordinate.latitude, v.coordinate.longitude]}
+                icon={createUberVehicleIcon(v)}
+              />
+            ))}
+        </>
+      )}
+
+      {/* Standalone Uber Cab Driving Route Polyline (Exact Road Navigation from polyline.json / OSRM) */}
+      {(() => {
+        const hasValidPolyline =
+          Array.isArray(cabPolyline) &&
+          cabPolyline.length >= 2 &&
+          cabPolyline.every(
+            (p) => Array.isArray(p) && p.length >= 2 && typeof p[0] === "number" && !isNaN(p[0]) && typeof p[1] === "number" && !isNaN(p[1])
+          );
+
+        const hasValidOrigin =
+          cabOrigin &&
+          typeof cabOrigin.lat === "number" &&
+          !isNaN(cabOrigin.lat) &&
+          typeof cabOrigin.lon === "number" &&
+          !isNaN(cabOrigin.lon);
+
+        const hasValidDest =
+          cabDestination &&
+          typeof cabDestination.lat === "number" &&
+          !isNaN(cabDestination.lat) &&
+          typeof cabDestination.lon === "number" &&
+          !isNaN(cabDestination.lon);
+
+        if (!hasValidPolyline && !hasValidOrigin && !hasValidDest) return null;
+
+        return (
+          <>
+            {/* Solid Black Road Driving Line matching Uber Web UI (rendered ONLY when real road polyline is ready) */}
+            {hasValidPolyline && (
+              <Polyline
+                positions={cabPolyline}
+                pathOptions={{
+                  color: "#000000",
+                  weight: 4.5,
+                  opacity: 0.95,
+                  lineCap: "round",
+                  lineJoin: "round",
+                }}
+              />
+            )}
+
+            {/* Uber Pickup Banner Pin */}
+            {hasValidOrigin && (
+              <Marker
+                position={[cabOrigin!.lat, cabOrigin!.lon]}
+                icon={createUberPickupIcon(nearbyCabs[0]?.etaInMin || 3, cabOriginName)}
+              />
+            )}
+
+            {/* Uber Dropoff Banner Pin */}
+            {hasValidDest && (
+              <Marker
+                position={[cabDestination!.lat, cabDestination!.lon]}
+                icon={createUberDropoffIcon(cabDestinationName)}
+              />
+            )}
+
+            <FitCabRoute origin={cabOrigin} destination={cabDestination} polyline={cabPolyline} />
+          </>
+        );
+      })()}
 
       <DevBusRouteInspector />
       <ClickHandler onClick={onMapClick} />

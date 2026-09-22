@@ -39,6 +39,7 @@ import {
   Wind,
   User,
   LogOut,
+  Car,
 } from "lucide-react";
 import {
   planJourney,
@@ -50,6 +51,8 @@ import {
 } from "@/lib/routing";
 import { findNearby, fmtNearbyDist, type NearbyStop, type NearbyResult } from "@/lib/nearby";
 import LiveBusTracker from "@/components/LiveBusTracker";
+import CabOptions from "@/components/CabOptions";
+import type { UberCabSearchResponse } from "@/lib/uberApi";
 import {
   fetchLiveRouteInfo,
   fetchLiveRouteDetails,
@@ -630,7 +633,7 @@ function Planner() {
     // Guard against NaN from partial input (e.g. user types "07" with no colon)
     return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
   };
-  const [picking, setPicking] = useState<"origin" | "destination" | null>(null);
+  const [picking, setPicking] = useState<"origin" | "destination" | "cab_origin" | "cab_destination" | null>(null);
   const [showNetwork, setShowNetwork] = useState(false);
   const [showBusStops, setShowBusStops] = useState(false);
   const [showMetroStations, setShowMetroStations] = useState(false);
@@ -666,7 +669,23 @@ function Planner() {
 
   // Google Maps Style Navigation Rail state
   const [cardOpen, setCardOpen] = useState(true);
-  const [activeRailItem, setActiveRailItem] = useState<"nearby" | "directions" | "live" | "saved" | "recents" | "stats" | "eco">("directions");
+  const [activeRailItem, setActiveRailItem] = useState<"nearby" | "directions" | "live" | "cabs" | "saved" | "recents" | "stats" | "eco">("directions");
+
+  // Standalone Uber Cab Options state
+  const [cabOrigin, setCabOrigin] = useState<Point | null>(null);
+  const [cabDestination, setCabDestination] = useState<Point | null>(null);
+  const [cabSearchResults, setCabSearchResults] = useState<UberCabSearchResponse | null>(null);
+  const [isCabLoading, setIsCabLoading] = useState(false);
+
+  // Healthy API Management: Flush all cab details and pending data whenever switching away from Cabs
+  useEffect(() => {
+    if (activeRailItem !== "cabs") {
+      setCabSearchResults(null);
+      setCabOrigin(null);
+      setCabDestination(null);
+      setIsCabLoading(false);
+    }
+  }, [activeRailItem]);
 
   // Nearby Transit state
   const [nearbyRadiusM, setNearbyRadiusM] = useState(2500);
@@ -789,7 +808,7 @@ function Planner() {
   const [isMounted, setIsMounted] = useState(false);
   useEffect(() => setIsMounted(true), []);
 
-  const handleGetLocation = (target: "origin" | "destination" = "origin") => {
+  const handleGetLocation = (target: "origin" | "destination" | "cab_origin" | "cab_destination" = "origin") => {
     if (!navigator.geolocation) {
       setLocError("Geolocation is not supported by your browser.");
       return;
@@ -805,8 +824,12 @@ function Planner() {
         };
         if (target === "origin") {
           setOrigin(point);
-        } else {
+        } else if (target === "destination") {
           setDestination(point);
+        } else if (target === "cab_origin") {
+          setCabOrigin(point);
+        } else if (target === "cab_destination") {
+          setCabDestination(point);
         }
         setPicking(null);
         setLocating(false);
@@ -1019,13 +1042,22 @@ function Planner() {
     if (!picking) return;
     const point = { ...p, name: `Pin ${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}` };
     if (picking === "origin") setOrigin(point);
-    else setDestination(point);
+    else if (picking === "destination") setDestination(point);
+    else if (picking === "cab_origin") setCabOrigin(point);
+    else if (picking === "cab_destination") setCabDestination(point);
     setPicking(null);
   };
 
   const swap = () => {
     setOrigin(destination);
     setDestination(origin);
+  };
+
+  const handleRedirectToCabs = () => {
+    if (origin) setCabOrigin({ ...origin });
+    if (destination) setCabDestination({ ...destination });
+    setActiveRailItem("cabs");
+    setCardOpen(true);
   };
 
   // Press Escape to cancel map-pin picking mode
@@ -1037,7 +1069,7 @@ function Planner() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const handleRailClick = (item: "nearby" | "directions" | "live" | "saved" | "recents" | "stats" | "eco") => {
+  const handleRailClick = (item: "nearby" | "directions" | "live" | "cabs" | "saved" | "recents" | "stats" | "eco") => {
     if (activeRailItem === item && cardOpen) {
       // Toggle card if clicking active
       setCardOpen(false);
@@ -1129,6 +1161,27 @@ function Planner() {
               </span>
             </div>
             <span>Live Bus</span>
+          </button>
+
+          {/* Standalone Uber Cabs Button */}
+          <button
+            onClick={() => handleRailClick("cabs")}
+            className={`group relative flex flex-col items-center gap-1 text-[10px] font-medium transition ${
+              activeRailItem === "cabs" && cardOpen
+                ? "text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <div
+              className={`flex size-10 items-center justify-center rounded-2xl transition ${
+                activeRailItem === "cabs" && cardOpen
+                  ? "bg-black text-white shadow-md ring-2 ring-black/30 dark:bg-white dark:text-black"
+                  : "bg-secondary/60 group-hover:bg-secondary group-hover:shadow-sm"
+              }`}
+            >
+              <Car className="size-5" />
+            </div>
+            <span>Cabs</span>
           </button>
 
           {/* Saved Places Button */}
@@ -1319,13 +1372,19 @@ function Planner() {
             <div className="flex items-center gap-2">
               <span
                 className={`flex size-7 items-center justify-center rounded-xl text-white shadow-sm ${
-                  activeRailItem === "live" ? "bg-indigo-600" : "bg-primary"
+                  activeRailItem === "live"
+                    ? "bg-indigo-600"
+                    : activeRailItem === "cabs"
+                    ? "bg-black text-white dark:bg-white dark:text-black"
+                    : "bg-primary"
                 }`}
               >
                 {activeRailItem === "nearby" ? (
                   <Compass className="size-4" />
                 ) : activeRailItem === "live" ? (
                   <Radio className="size-4" />
+                ) : activeRailItem === "cabs" ? (
+                  <Car className="size-4" />
                 ) : activeRailItem === "saved" ? (
                   <Bookmark className="size-4" />
                 ) : activeRailItem === "recents" ? (
@@ -1343,27 +1402,31 @@ function Planner() {
                   {activeRailItem === "nearby"
                     ? "Nearby Transit"
                     : activeRailItem === "live"
-                      ? "Live Bus Tracking"
-                      : activeRailItem === "saved"
-                        ? "Saved Places"
-                        : activeRailItem === "recents"
-                          ? "Commuter Routes"
-                          : activeRailItem === "stats"
-                            ? "Nagpur Network"
-                            : "Plan Your Journey"}
+                    ? "Live Bus Tracking"
+                    : activeRailItem === "cabs"
+                    ? "Cab Options & Fares"
+                    : activeRailItem === "saved"
+                    ? "Saved Places"
+                    : activeRailItem === "recents"
+                    ? "Commuter Routes"
+                    : activeRailItem === "stats"
+                    ? "Nagpur Network"
+                    : "Plan Your Journey"}
                 </h1>
                 <p className="text-[10px] text-muted-foreground">
                   {activeRailItem === "nearby"
                     ? "Bus stops & Metro within coverage radius"
                     : activeRailItem === "live"
-                      ? "Real-time Aapli Bus GPS & live ETAs (Chalo)"
-                      : activeRailItem === "saved"
-                        ? "Popular destinations in Nagpur"
-                        : activeRailItem === "recents"
-                          ? "Instant 1-click commuter trips"
-                          : activeRailItem === "stats"
-                            ? "Metro & Bus multimodal stats"
-                            : "Find the best route for "}
+                    ? "Real-time Aapli Bus GPS & live ETAs (Chalo)"
+                    : activeRailItem === "cabs"
+                    ? "Live Uber Go, Auto, Premier & Bike estimates"
+                    : activeRailItem === "saved"
+                    ? "Popular destinations in Nagpur"
+                    : activeRailItem === "recents"
+                    ? "Instant 1-click commuter trips"
+                    : activeRailItem === "stats"
+                    ? "Metro & Bus multimodal stats"
+                    : "Find the best route for "}
                 </p>
               </div>
             </div>
@@ -1576,6 +1639,23 @@ function Planner() {
                 isPolling={isLivePolling}
                 refreshSecondsRemaining={liveRefreshCountdown}
                 onManualRefresh={handleManualLiveRefresh}
+              />
+            )}
+
+            {/* ── FEATURE 1C: STANDALONE UBER CAB OPTIONS ── */}
+            {activeRailItem === "cabs" && (
+              <CabOptions
+                origin={cabOrigin}
+                destination={cabDestination}
+                onSelectOrigin={setCabOrigin}
+                onSelectDestination={setCabDestination}
+                onSearchResults={setCabSearchResults}
+                isLoading={isCabLoading}
+                setIsLoading={setIsCabLoading}
+                picking={picking}
+                onStartPicking={setPicking}
+                onLocate={handleGetLocation}
+                locating={locating}
               />
             )}
 
@@ -1802,8 +1882,21 @@ function Planner() {
                   )}
 
                   {result?.error && (
-                    <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-3.5 text-xs text-destructive">
-                      {result.error}
+                    <div className="space-y-2.5">
+                      <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-3.5 text-xs text-destructive">
+                        {result.error}
+                      </div>
+
+                      {/* Show Available Cab Services Button */}
+                      <button
+                        type="button"
+                        onClick={handleRedirectToCabs}
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-black px-4 py-3 text-xs font-bold text-white shadow-md transition hover:bg-slate-900 active:scale-98 dark:bg-white dark:text-black dark:hover:bg-slate-200"
+                      >
+                        <Car className="size-4" />
+                        <span>Show Available Cab Services</span>
+                        <ArrowRight className="size-3.5" />
+                      </button>
                     </div>
                   )}
 
@@ -2099,9 +2192,19 @@ function Planner() {
               showNetwork={showNetwork}
               showBusStops={showBusStops && activeRailItem === "directions"}
               showMetroStations={showMetroStations && activeRailItem === "directions"}
-              picking={activeRailItem === "directions" ? picking : null}
+              picking={
+                activeRailItem === "directions"
+                  ? (picking === "origin" || picking === "destination" ? picking : null)
+                  : activeRailItem === "cabs"
+                  ? (picking === "cab_origin" || picking === "cab_destination" ? picking : null)
+                  : null
+              }
               onMapClick={handleMapClick}
-              isCurrentLocation={origin?.name === "Your location"}
+              isCurrentLocation={
+                activeRailItem === "directions"
+                  ? origin?.name === "Your location"
+                  : cabOrigin?.name === "Your location"
+              }
               nearbyMode={cardOpen && activeRailItem === "nearby"}
               nearbyAnchor={activeRailItem === "nearby" ? nearbyAnchor : null}
               nearbyRadiusM={nearbyRadiusM}
@@ -2110,6 +2213,12 @@ function Planner() {
               liveTelemetry={activeRailItem === "live" ? liveTelemetry : null}
               selectedLiveStop={activeRailItem === "live" ? selectedLiveStop : null}
               onSelectLiveStop={setSelectedLiveStop}
+              nearbyCabs={activeRailItem === "cabs" ? (cabSearchResults?.nearbyVehicles || []) : []}
+              cabOrigin={activeRailItem === "cabs" ? cabOrigin : null}
+              cabDestination={activeRailItem === "cabs" ? cabDestination : null}
+              cabPolyline={activeRailItem === "cabs" ? (cabSearchResults?.polyline || []) : []}
+              cabOriginName={activeRailItem === "cabs" ? cabOrigin?.name : undefined}
+              cabDestinationName={activeRailItem === "cabs" ? cabDestination?.name : undefined}
             />
           </Suspense>
         ) : (
