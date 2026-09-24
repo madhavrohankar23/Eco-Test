@@ -52,6 +52,8 @@ import {
 import { findNearby, fmtNearbyDist, type NearbyStop, type NearbyResult } from "@/lib/nearby";
 import LiveBusTracker from "@/components/LiveBusTracker";
 import CabOptions from "@/components/CabOptions";
+import AiRouteExplainer from "@/components/AiRouteExplainer";
+import AiTransitChatbot from "@/components/AiTransitChatbot";
 import type { UberCabSearchResponse } from "@/lib/uberApi";
 import {
   fetchLiveRouteInfo,
@@ -1929,6 +1931,16 @@ function Planner() {
                               value={`${Math.max(0, Math.round((journey.totalDistanceM / 1000) * 170 - journey.co2g))} g`}
                             />
                           </div>
+
+                          {/* ── AI Route Explainer (Powered by n8n Agent) ── */}
+                          <div className="mb-4">
+                            <AiRouteExplainer
+                              journey={journey}
+                              originName={origin?.name ?? "Source"}
+                              destinationName={destination?.name ?? "Destination"}
+                            />
+                          </div>
+
                           <Itinerary
                             journey={journey}
                             origin={origin?.name ?? "Source"}
@@ -2227,6 +2239,13 @@ function Planner() {
           </div>
         )}
       </div>
+
+      {/* ── 4. FLOATING AI TRANSIT CHATBOT (Bottom-Right Corner) ── */}
+      <AiTransitChatbot
+        currentJourney={activeRailItem === "directions" ? journey : null}
+        originName={origin?.name}
+        destinationName={destination?.name}
+      />
     </main>
   );
 }
