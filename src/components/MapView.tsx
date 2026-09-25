@@ -903,20 +903,6 @@ export default function MapView({
       <ClickHandler onClick={onMapClick} />
       <Fit journey={journey} />
     </MapContainer>
-
-    {/* Metro line legend */}
-    <div className="pointer-events-none absolute bottom-7 right-2 z-[1000] flex flex-col gap-1">
-      {Object.entries(METRO_LINE_COLOR).map(([name, color]) => (
-        <div
-          key={name}
-          className="flex items-center gap-1.5 rounded-md bg-white/90 px-2 py-1 text-[11px] font-semibold shadow-sm backdrop-blur-sm"
-          style={{ borderLeft: `3px solid ${color}` }}
-        >
-          <span className="inline-block h-1.5 w-5 rounded-full" style={{ background: color }} />
-          {name}
-        </div>
-      ))}
-    </div>
     </div>
   );
 }

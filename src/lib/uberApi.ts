@@ -513,6 +513,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
 
   // All product types from real Uber response JSON across tiers
   const tiers: Array<{
+    id: string;
     name: string;
     description: string;
     detailedDescription: string;
@@ -526,6 +527,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
     discountPct?: number;
   }> = [
     {
+      id: "20065179",
       name: "Uber Go",
       description: "Uber Go",
       detailedDescription: "Affordable compact rides",
@@ -539,6 +541,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
       discountPct: 0.18,
     },
     {
+      id: "20065180",
       name: "Go Non AC",
       description: "Go Non AC",
       detailedDescription: "Everyday affordable rides",
@@ -551,6 +554,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
       discountPct: 0.20,
     },
     {
+      id: "20000008",
       name: "Auto",
       description: "Auto",
       detailedDescription: "Pay directly to driver, cash/UPI only",
@@ -564,6 +568,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
       discountPct: 0.14,
     },
     {
+      id: "20000005",
       name: "Bike",
       description: "Bike",
       detailedDescription: "Affordable, bike rides",
@@ -576,6 +581,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
       discountPct: 0.35,
     },
     {
+      id: "20000010",
       name: "Parcel Bike",
       description: "Parcel Bike",
       detailedDescription: "Send Packages to loved ones",
@@ -588,6 +594,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
       discountPct: 0.25,
     },
     {
+      id: "20000002",
       name: "Premier",
       description: "Premier",
       detailedDescription: "Comfortable sedans, top-quality drivers",
@@ -599,6 +606,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
       image: "https://d1a3f4spazzrp4.cloudfront.net/car-types/haloProductImages/Regular/SedanComfort-Sparkles-523.png",
     },
     {
+      id: "20000003",
       name: "UberXL",
       description: "UberXL",
       detailedDescription: "Spacious SUVs for up to 6 riders",
@@ -610,6 +618,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
       image: "https://d1a3f4spazzrp4.cloudfront.net/car-types/haloProductImages/Regular/SUV-520.png",
     },
     {
+      id: "20000009",
       name: "Uber Green",
       description: "Uber Green",
       detailedDescription: "Eco-friendly EV rides for cleaner air",
@@ -633,6 +642,7 @@ function generateDynamicProductPricing(roadDistKm: number): UberProductEstimate[
     const origRange = t.discountPct ? formatFareRange(rawCost) : undefined;
 
     return {
+      id: t.id,
       displayName: t.name,
       description: t.description,
       detailedDescription: t.detailedDescription,

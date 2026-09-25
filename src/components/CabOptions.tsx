@@ -235,17 +235,70 @@ export default function CabOptions({
     return arrivalDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
   };
 
-  // Deep link URL to Uber Official Rider Website with pickup and dropoff pre-set
+  // Deep link URL to Uber Official Rider Website with pickup and dropoff pre-set automatically
   const getUberDeepLink = (prod?: UberProductEstimate) => {
-    if (!origin || !destination) return "https://www.uber.com/in/en/rider-home/";
+    if (!origin || !destination) return "https://m.uber.com/go/product-selection?action=setPickup";
+
     const pickupLat = origin.lat;
     const pickupLng = origin.lon;
-    const pickupName = encodeURIComponent(origin.name || "Pickup");
+    const isPickupCurrentLoc =
+      origin.name === "Your location" ||
+      origin.name?.toLowerCase().includes("current location") ||
+      origin.name?.toLowerCase().includes("pickup (");
+    const rawPickupName =
+      origin.name && origin.name !== "Your location"
+        ? origin.name
+        : `Pickup (${pickupLat.toFixed(4)}, ${pickupLng.toFixed(4)})`;
+
     const dropLat = destination.lat;
     const dropLng = destination.lon;
-    const dropName = encodeURIComponent(destination.name || "Destination");
+    const rawDropName =
+      destination.name && destination.name !== "Your location"
+        ? destination.name
+        : `Destination (${dropLat.toFixed(4)}, ${dropLng.toFixed(4)})`;
 
-    return `https://m.uber.com/looking?pickup[latitude]=${pickupLat}&pickup[longitude]=${pickupLng}&pickup[formatted_address]=${pickupName}&destination[latitude]=${dropLat}&destination[longitude]=${dropLng}&destination[formatted_address]=${dropName}`;
+    const pickupObj = {
+      addressLine1: rawPickupName,
+      addressLine2: isPickupCurrentLoc ? "Your current location" : `${rawPickupName}, Nagpur, Maharashtra`,
+      id: `poi_pickup_${pickupLat.toFixed(4)}_${pickupLng.toFixed(4)}`,
+      source: isPickupCurrentLoc ? "DEFAULT_DEVICE" : "SEARCH",
+      latitude: pickupLat,
+      longitude: pickupLng,
+      provider: "google_places",
+    };
+
+    const dropObj = {
+      addressLine1: rawDropName,
+      addressLine2: `${rawDropName}, Nagpur, Maharashtra`,
+      id: `poi_drop_${dropLat.toFixed(4)}_${dropLng.toFixed(4)}`,
+      source: "SEARCH",
+      latitude: dropLat,
+      longitude: dropLng,
+      provider: "google_places",
+    };
+
+    const params = new URLSearchParams();
+    params.set("action", "setPickup");
+    params.set("destination[formatted_address]", rawDropName);
+    params.set("destination[latitude]", String(dropLat));
+    params.set("destination[longitude]", String(dropLng));
+    params.set("destination[nickname]", rawDropName);
+    params.set("drop[0]", JSON.stringify(dropObj));
+    params.set("dropoff[formatted_address]", rawDropName);
+    params.set("dropoff[latitude]", String(dropLat));
+    params.set("dropoff[longitude]", String(dropLng));
+    params.set("dropoff[nickname]", rawDropName);
+    params.set("pickup", JSON.stringify(pickupObj));
+    params.set("pickup[formatted_address]", rawPickupName);
+    params.set("pickup[latitude]", String(pickupLat));
+    params.set("pickup[longitude]", String(pickupLng));
+    params.set("pickup[nickname]", rawPickupName);
+
+    if (prod?.id) {
+      params.set("vehicle", prod.id);
+    }
+
+    return `https://m.uber.com/go/product-selection?${params.toString()}`;
   };
 
   return (
@@ -519,8 +572,8 @@ export default function CabOptions({
               rel="noopener noreferrer"
               className="w-full flex items-center justify-center gap-2 rounded-2xl bg-black py-3.5 text-sm font-extrabold text-white shadow-lg transition hover:bg-neutral-850 active:scale-98 dark:bg-white dark:text-black dark:hover:bg-slate-200"
             >
-              <span>Request a Cab</span>
-              <ArrowRight className="size-4" />
+              <span>{selectedProduct ? `Request a Cab on Uber` : "Request on Uber"}</span>
+              <ExternalLink className="size-4" />
             </a>
           </div>
         </div>

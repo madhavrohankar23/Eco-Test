@@ -39,3 +39,8 @@ dist-ssr
 work_log_report.md
 test_metro_fare_scenarios.ts
 test_routing_improvements.ts
+nearby.json
+polyline.json
+price.json
+.mcp.json
+.agents/mcp_config.json
