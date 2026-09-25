@@ -178,7 +178,10 @@
 }
 
 /* ── Live Moving Bus Marker & Vehicle Registration Badge ── */
-.live-bus-vehicle-divicon {
+.live-bus-vehicle-divicon,
+.custom-origin-pushpin,
+.custom-dest-pushpin,
+.custom-origin-gps-marker {
   background: transparent !important;
   border: none !important;
 }
