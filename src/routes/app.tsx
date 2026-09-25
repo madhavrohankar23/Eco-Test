@@ -12,6 +12,7 @@ import {
   Bookmark,
   BookmarkCheck,
   Bus,
+  Calendar,
   Clock,
   Compass,
   Footprints,
@@ -54,6 +55,7 @@ import LiveBusTracker from "@/components/LiveBusTracker";
 import CabOptions from "@/components/CabOptions";
 import AiRouteExplainer from "@/components/AiRouteExplainer";
 import AiTransitChatbot from "@/components/AiTransitChatbot";
+import BusTimetablePanel from "@/components/BusTimetablePanel";
 import type { UberCabSearchResponse } from "@/lib/uberApi";
 import {
   fetchLiveRouteInfo,
@@ -133,11 +135,18 @@ function JourneyCard({
   active,
   onClick,
   index,
+  onSelectBusTimetable,
 }: {
   journey: Journey;
   active: boolean;
   onClick: () => void;
   index: number;
+  onSelectBusTimetable?: (bus: {
+    busNumber?: string | undefined;
+    routeName?: string | undefined;
+    fromStop?: string | undefined;
+    toStop?: string | undefined;
+  }) => void;
 }) {
   const [openFreq, setOpenFreq] = useState<number | null>(null);
 
@@ -193,10 +202,11 @@ function JourneyCard({
       {/* Legs summary bar */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         {journey.legs.map((leg, i) => {
-          const isTransit = leg.mode === "bus" || leg.mode === "metro";
+          const isBus = leg.mode === "bus";
+          const isMetro = leg.mode === "metro";
+          const isTransit = isBus || isMetro;
           const hasFreq = isTransit && (leg.frequencyMin ?? 0) > 0;
           const isOpen = openFreq === i;
-          const isMetro = leg.mode === "metro";
           const isBlueMetro = isMetro && (leg.line ?? "").toLowerCase().includes("blue");
           const isOrangeMetro = isMetro && !isBlueMetro;
 
@@ -205,6 +215,16 @@ function JourneyCard({
               {i > 0 && <ArrowRight className="size-3 text-muted-foreground" />}
               <span
                 onClick={(e) => {
+                  if (isBus && onSelectBusTimetable) {
+                    e.stopPropagation();
+                    onSelectBusTimetable({
+                      busNumber: leg.busNumber,
+                      routeName: leg.line,
+                      fromStop: leg.from,
+                      toStop: leg.to,
+                    });
+                    return;
+                  }
                   if (hasFreq) {
                     e.stopPropagation();
                     setOpenFreq((cur) => (cur === i ? null : i));
@@ -215,25 +235,33 @@ function JourneyCard({
                     ? "border border-[#00aaff]/30 bg-[#00aaff]/15 text-[#0088cc] hover:bg-[#00aaff]/25"
                     : isOrangeMetro
                       ? "border border-[#ff6a00]/30 bg-[#ff6a00]/15 text-[#e05500] hover:bg-[#ff6a00]/25"
-                      : leg.mode === "bus"
-                        ? "border border-bus/30 bg-bus/15 text-bus hover:bg-bus/25"
+                      : isBus
+                        ? "border border-bus/30 bg-bus/15 text-bus hover:bg-bus/25 active:scale-95 shadow-2xs font-semibold"
                         : "bg-secondary text-muted-foreground"
-                } ${hasFreq ? "cursor-pointer select-none" : ""}`}
-                title={hasFreq ? "Click to view departure frequency" : undefined}
+                } ${hasFreq || isBus ? "cursor-pointer select-none" : ""}`}
+                title={
+                  isBus
+                    ? `Click to view Bus ${leg.busNumber || ""} daily timetable & schedule`
+                    : hasFreq
+                      ? "Click to view departure frequency"
+                      : undefined
+                }
               >
                 <ModeIcon mode={leg.mode} line={leg.line} />
                 <span className="max-w-[120px] truncate">
-                  {leg.mode === "bus" && leg.busNumber
+                  {isBus && leg.busNumber
                     ? `Bus ${leg.busNumber}`
                     : leg.line ?? `${Math.round(leg.timeMin)}m`}
                 </span>
-                {hasFreq && (
+                {isBus ? (
+                  <Calendar className="size-2.5 opacity-80 text-teal-600 dark:text-teal-400 ml-0.5 shrink-0" />
+                ) : hasFreq ? (
                   <Timer className={`size-2.5 opacity-70 transition-transform ${isOpen ? "rotate-180" : ""}`} />
-                )}
+                ) : null}
               </span>
 
-              {/* Click-to-reveal Frequency Popover */}
-              {isOpen && hasFreq && (
+              {/* Click-to-reveal Frequency Popover (for Metro) */}
+              {isOpen && hasFreq && !isBus && (
                 <div
                   onClick={(e) => e.stopPropagation()}
                   className="absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg border border-border bg-popover px-2.5 py-1.5 text-[11px] font-medium text-popover-foreground shadow-lg animate-in fade-in zoom-in-95"
@@ -257,10 +285,17 @@ function Itinerary({
   journey,
   origin,
   destination,
+  onSelectBusTimetable,
 }: {
   journey: Journey;
   origin: string;
   destination: string;
+  onSelectBusTimetable?: (bus: {
+    busNumber?: string | undefined;
+    routeName?: string | undefined;
+    fromStop?: string | undefined;
+    toStop?: string | undefined;
+  }) => void;
 }) {
   const [openStopsIndex, setOpenStopsIndex] = useState<number | null>(null);
 
@@ -373,9 +408,22 @@ function Itinerary({
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Icon className="size-4" style={{ color: theme.textColor }} />
                   {leg.mode === "bus" && leg.busNumber && (
-                    <span className="rounded-md bg-teal-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-xs">
-                      BUS {leg.busNumber}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onSelectBusTimetable?.({
+                          busNumber: leg.busNumber,
+                          routeName: leg.line,
+                          fromStop: leg.from,
+                          toStop: leg.to,
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-xs transition hover:bg-teal-700 active:scale-95 cursor-pointer"
+                      title="Click to view full bus timetable"
+                    >
+                      <span>BUS {leg.busNumber}</span>
+                      <Calendar className="size-2.5 opacity-80" />
+                    </button>
                   )}
                   <span className="text-xs font-bold" style={{ color: theme.textColor }}>
                     {leg.line ?? leg.mode}
@@ -462,6 +510,30 @@ function Itinerary({
                     </ul>
                   )}
                 </div>
+              )}
+
+              {/* Row 5: View Full Daily Bus Timetable Action Button */}
+              {leg.mode === "bus" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onSelectBusTimetable?.({
+                      busNumber: leg.busNumber,
+                      routeName: leg.line,
+                      fromStop: leg.from,
+                      toStop: leg.to,
+                    })
+                  }
+                  className="mt-2.5 flex w-full items-center justify-between rounded-xl border border-teal-500/25 bg-teal-500/10 px-3 py-1.5 text-xs font-bold text-teal-700 dark:text-teal-300 transition hover:bg-teal-500/20 active:scale-98 cursor-pointer shadow-2xs"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="size-3.5 text-teal-600 dark:text-teal-400" />
+                    <span>View Bus Timetable ({leg.tripsPerDay ? `${leg.tripsPerDay} trips/day` : "All schedules"})</span>
+                  </span>
+                  <span className="text-[11px] opacity-80 flex items-center gap-0.5 font-semibold">
+                    Open <ArrowRight className="size-3" />
+                  </span>
+                </button>
               )}
             </div>
           </div>
@@ -643,11 +715,26 @@ function Planner() {
   const [result, setResult] = useState<{ journeys: Journey[]; error?: string } | null>(null);
   const [enriching, setEnriching] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
+  const [selectedBusTimetable, setSelectedBusTimetable] = useState<{
+    busNumber?: string | undefined;
+    routeName?: string | undefined;
+    fromStop?: string | undefined;
+    toStop?: string | undefined;
+  } | null>(null);
   // Cancellation token: each plan() call mints a new token. A newer call marks the
   // previous token as cancelled so stale setResult calls are silently discarded.
   const planTokenRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const [locating, setLocating] = useState(false);
   const [locError, setLocError] = useState<string | null>(null);
+
+  // Automatically clear planned route recommendations and map polylines when source or destination is cleared
+  useEffect(() => {
+    if (!origin || !destination) {
+      setResult(null);
+      setSelected(0);
+      setSelectedBusTimetable(null);
+    }
+  }, [origin, destination]);
 
   // Saved Custom Journeys list
   const [savedJourneys, setSavedJourneys] = useState<SavedJourneyItem[]>(() => {
@@ -1912,6 +1999,7 @@ function Planner() {
                             index={i}
                             active={i === selected}
                             onClick={() => setSelected(i)}
+                            onSelectBusTimetable={(bus) => setSelectedBusTimetable(bus)}
                           />
                         ))}
                       </div>
@@ -1945,6 +2033,7 @@ function Planner() {
                             journey={journey}
                             origin={origin?.name ?? "Source"}
                             destination={destination?.name ?? "Destination"}
+                            onSelectBusTimetable={(bus) => setSelectedBusTimetable(bus)}
                           />
                         </section>
                       )}
@@ -2016,22 +2105,33 @@ function Planner() {
                             {saved.legs.map((leg, li) => {
                               const isBlue = (leg.line ?? "").toLowerCase().includes("blue");
                               const isOrange = leg.mode === "metro" && !isBlue;
+                              const isBus = leg.mode === "bus";
                               return (
                                 <span
                                   key={li}
+                                  onClick={(e) => {
+                                    if (isBus) {
+                                      e.stopPropagation();
+                                      setSelectedBusTimetable({
+                                        busNumber: leg.busNumber,
+                                        routeName: leg.line,
+                                      });
+                                    }
+                                  }}
+                                  title={isBus ? `Click to view Bus ${leg.busNumber || ""} daily timetable` : undefined}
                                   className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
                                     isBlue
                                       ? "border border-[#00aaff]/30 bg-[#00aaff]/15 text-[#0088cc]"
                                       : isOrange
                                         ? "border border-[#ff6a00]/30 bg-[#ff6a00]/15 text-[#e05500]"
-                                        : leg.mode === "bus"
-                                          ? "border border-bus/30 bg-bus/15 text-bus"
+                                        : isBus
+                                          ? "border border-bus/30 bg-bus/15 text-bus hover:bg-bus/25 active:scale-95 cursor-pointer"
                                           : "bg-secondary text-muted-foreground"
                                   }`}
                                 >
                                   <ModeIcon mode={leg.mode} line={leg.line} className="size-2.5" />
                                   <span className="max-w-[90px] truncate">
-                                    {leg.mode === "bus" && leg.busNumber
+                                    {isBus && leg.busNumber
                                       ? `Bus ${leg.busNumber}`
                                       : leg.line ?? `${Math.round(leg.timeMin)}m`}
                                   </span>
@@ -2246,6 +2346,14 @@ function Planner() {
         originName={origin?.name}
         destinationName={destination?.name}
       />
+
+      {/* ── 5. DEDICATED BUS TIMETABLE PANEL (Right-Hand Side Drawer) ── */}
+      {selectedBusTimetable && (
+        <BusTimetablePanel
+          {...selectedBusTimetable}
+          onClose={() => setSelectedBusTimetable(null)}
+        />
+      )}
     </main>
   );
 }

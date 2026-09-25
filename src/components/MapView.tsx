@@ -270,6 +270,125 @@ function createUberDropoffIcon(locationName?: string) {
   });
 }
 
+/** Creates a slender, elegant 3D Green Pushpin Tack for Source with exact needle-tip anchoring */
+function createOriginMarkerIcon(isGPS: boolean = false) {
+  if (isGPS) {
+    return L.divIcon({
+      className: "custom-origin-gps-marker",
+      html: `
+        <div style="width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; position: relative;">
+          <div style="
+            position: absolute;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(16, 185, 129, 0.25);
+            animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+          "></div>
+          <div style="
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 30%, #4ade80 0%, #16a34a 60%, #064e3b 100%);
+            border: 2px solid #ffffff;
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          ">
+            <div style="width: 4px; height: 4px; border-radius: 50%; background: #ffffff;"></div>
+          </div>
+        </div>
+      `,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10],
+    });
+  }
+
+  return L.divIcon({
+    className: "custom-origin-pushpin",
+    html: `
+      <div style="width: 20px; height: 32px; pointer-events: auto;">
+        <svg width="20" height="32" viewBox="0 0 20 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;">
+          <!-- Ground Contact Shadow -->
+          <ellipse cx="10" cy="31.5" rx="3" ry="1" fill="#000000" fill-opacity="0.3" />
+          
+          <!-- Slender Metallic Steel Needle -->
+          <path d="M9.4 12.5 L10 31.5 L10 12.5 Z" fill="#f1f5f9" />
+          <path d="M10 12.5 L10 31.5 L10.6 12.5 Z" fill="#64748b" />
+          <!-- Metallic Collar / Base Cap -->
+          <ellipse cx="10" cy="12.5" rx="1.5" ry="0.5" fill="#94a3b8" />
+          <ellipse cx="10" cy="12.3" rx="1.1" ry="0.35" fill="#cbd5e1" />
+
+          <!-- Slender 3D Green Sphere Head -->
+          <circle cx="10" cy="6.5" r="6" fill="#064e3b" />
+          <circle cx="10" cy="6.5" r="5.7" fill="url(#green-pushpin-grad)" />
+          <!-- 3D Specular Highlights -->
+          <ellipse cx="8" cy="4.5" rx="1.8" ry="1.2" transform="rotate(-25 8 4.5)" fill="#ffffff" fill-opacity="0.85" />
+          <circle cx="7.6" cy="4.1" r="0.7" fill="#ffffff" />
+          <!-- Ambient bottom bounce glow -->
+          <path d="M 6.5 8.8 Q 10 11.2 13.5 8.8" stroke="rgba(255,255,255,0.2)" stroke-width="0.7" fill="none" />
+
+          <defs>
+            <radialGradient id="green-pushpin-grad" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stop-color="#86efac" />
+              <stop offset="25%" stop-color="#22c55e" />
+              <stop offset="65%" stop-color="#16a34a" />
+              <stop offset="90%" stop-color="#15803d" />
+              <stop offset="100%" stop-color="#064e3b" />
+            </radialGradient>
+          </defs>
+        </svg>
+      </div>
+    `,
+    iconSize: [20, 32],
+    iconAnchor: [10, 31.5],
+  });
+}
+
+/** Creates a slender, elegant 3D Red Pushpin Tack for Destination with exact needle-tip anchoring */
+function createDestinationMarkerIcon() {
+  return L.divIcon({
+    className: "custom-dest-pushpin",
+    html: `
+      <div style="width: 20px; height: 32px; pointer-events: auto;">
+        <svg width="20" height="32" viewBox="0 0 20 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;">
+          <!-- Ground Contact Shadow -->
+          <ellipse cx="10" cy="31.5" rx="3" ry="1" fill="#000000" fill-opacity="0.3" />
+          
+          <!-- Slender Metallic Steel Needle -->
+          <path d="M9.4 12.5 L10 31.5 L10 12.5 Z" fill="#f1f5f9" />
+          <path d="M10 12.5 L10 31.5 L10.6 12.5 Z" fill="#64748b" />
+          <!-- Metallic Collar / Base Cap -->
+          <ellipse cx="10" cy="12.5" rx="1.5" ry="0.5" fill="#94a3b8" />
+          <ellipse cx="10" cy="12.3" rx="1.1" ry="0.35" fill="#cbd5e1" />
+
+          <!-- Slender 3D Red Sphere Head -->
+          <circle cx="10" cy="6.5" r="6" fill="#450a0a" />
+          <circle cx="10" cy="6.5" r="5.7" fill="url(#red-pushpin-grad)" />
+          <!-- 3D Specular Highlights -->
+          <ellipse cx="8" cy="4.5" rx="1.8" ry="1.2" transform="rotate(-25 8 4.5)" fill="#ffffff" fill-opacity="0.85" />
+          <circle cx="7.6" cy="4.1" r="0.7" fill="#ffffff" />
+          <!-- Ambient bottom bounce glow -->
+          <path d="M 6.5 8.8 Q 10 11.2 13.5 8.8" stroke="rgba(255,255,255,0.2)" stroke-width="0.7" fill="none" />
+
+          <defs>
+            <radialGradient id="red-pushpin-grad" cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stop-color="#fca5a5" />
+              <stop offset="25%" stop-color="#ef4444" />
+              <stop offset="65%" stop-color="#dc2626" />
+              <stop offset="90%" stop-color="#991b1b" />
+              <stop offset="100%" stop-color="#450a0a" />
+            </radialGradient>
+          </defs>
+        </svg>
+      </div>
+    `,
+    iconSize: [20, 32],
+    iconAnchor: [10, 31.5],
+  });
+}
+
 function FitCabRoute({
   origin,
   destination,
@@ -348,8 +467,8 @@ export default function MapView({
   cabDestinationName,
 }: {
   journey: Journey | null;
-  origin?: { lat: number; lon: number } | null;
-  destination?: { lat: number; lon: number } | null;
+  origin?: { lat: number; lon: number; name?: string } | null;
+  destination?: { lat: number; lon: number; name?: string } | null;
   showNetwork: boolean;
   showBusStops: boolean;
   showMetroStations: boolean;
@@ -528,41 +647,35 @@ export default function MapView({
           ));
         })}
 
-      {/* Origin pin — blue pulsing dot for GPS location, dark dot otherwise */}
+      {/* Origin / Source Pin — slender 3D green pushpin */}
       {origin && isCurrentLocation && (
         <>
-          <CircleMarker
-            center={[origin.lat, origin.lon]}
-            radius={18}
-            pathOptions={{ color: "#2563eb", fillColor: "#2563eb", fillOpacity: 0.12, weight: 0 }}
-          />
-          <CircleMarker
-            center={[origin.lat, origin.lon]}
-            radius={8}
-            pathOptions={{ color: "#ffffff", fillColor: "#2563eb", fillOpacity: 1, weight: 2.5 }}
+          <Marker
+            position={[origin.lat, origin.lon]}
+            icon={createOriginMarkerIcon(true)}
           >
-            <Tooltip>Your location</Tooltip>
-          </CircleMarker>
+            <Tooltip direction="top" offset={[0, -12]}>Your Location (GPS)</Tooltip>
+          </Marker>
           <FlyToLocation pos={origin} />
         </>
       )}
       {origin && !isCurrentLocation && (
-        <CircleMarker
-          center={[origin.lat, origin.lon]}
-          radius={8}
-          pathOptions={{ color: "#0f172a", fillColor: "#0f172a", fillOpacity: 1, weight: 2 }}
+        <Marker
+          position={[origin.lat, origin.lon]}
+          icon={createOriginMarkerIcon(false)}
         >
-          <Tooltip>Source</Tooltip>
-        </CircleMarker>
+          <Tooltip direction="top" offset={[0, -32]}>{origin.name || "Source"}</Tooltip>
+        </Marker>
       )}
+
+      {/* Destination Pin — slender 3D red pushpin */}
       {destination && (
-        <CircleMarker
-          center={[destination.lat, destination.lon]}
-          radius={8}
-          pathOptions={{ color: "#dc2626", fillColor: "#dc2626", fillOpacity: 1, weight: 2 }}
+        <Marker
+          position={[destination.lat, destination.lon]}
+          icon={createDestinationMarkerIcon()}
         >
-          <Tooltip>Destination</Tooltip>
-        </CircleMarker>
+          <Tooltip direction="top" offset={[0, -32]}>{destination.name || "Destination"}</Tooltip>
+        </Marker>
       )}
 
       {/* Nearby anchor pin & search radius coverage circle */}

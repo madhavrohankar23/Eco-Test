@@ -401,7 +401,8 @@ placeSpatialIndex.insertAll(net.placeList);
         timeMin: 0,
         co2g: 0,
       });
-      for (const j of [i - 1, i + 1]) {
+      const neighbors = line.mode === "bus" ? [i + 1] : [i - 1, i + 1];
+      for (const j of neighbors) {
         if (j < 0 || j >= line.placeIds.length) continue;
         const a = line.points[i]!;
         const b = line.points[j]!;
@@ -834,11 +835,11 @@ function search(
               const stopDepartures = validDepartures.map((d) => d + offset);
               const nextDep = stopDepartures.find((d) => d >= arrivalAtStopMin);
               if (nextDep == null) {
-                continue;
+                continue; // No more buses scheduled today for this stop
               }
               const waitMin = nextDep - arrivalAtStopMin;
-              if (waitMin > 90) {
-                continue;
+              if (waitMin > 60) {
+                continue; // Skip buses requiring more than 60 mins wait
               }
               const trips = line.tripsPerDay || 1;
               const headway = line.headwayMin || line.frequencyMin || 30;
@@ -848,9 +849,9 @@ function search(
               } else if (trips >= 10) {
                 headwayPenalty = 3;
               } else if (trips < 5) {
-                headwayPenalty = 14;
+                headwayPenalty = 10;
               } else {
-                headwayPenalty = Math.min(12, Math.max(2, headway * 0.2));
+                headwayPenalty = Math.min(8, Math.max(2, headway * 0.2));
               }
 
               edgeTimeMin = Math.max(1, waitMin) + headwayPenalty;
@@ -1251,7 +1252,7 @@ function toJourney(
       const rideTime = Math.max(0.5, leg.timeMin - wait);
       leg.departureTimeStr = formatTime(vehicleDepMin);
       leg.arrivalTimeStr = formatTime(vehicleDepMin + rideTime);
-      legClockMin += leg.timeMin;
+      legClockMin = vehicleDepMin + rideTime;
     }
   }
 
