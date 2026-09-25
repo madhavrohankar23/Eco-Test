@@ -56,6 +56,7 @@ import CabOptions from "@/components/CabOptions";
 import AiRouteExplainer from "@/components/AiRouteExplainer";
 import AiTransitChatbot from "@/components/AiTransitChatbot";
 import BusTimetablePanel from "@/components/BusTimetablePanel";
+import GoogleMapsSearchBar from "@/components/GoogleMapsSearchBar";
 import type { UberCabSearchResponse } from "@/lib/uberApi";
 import {
   fetchLiveRouteInfo,
@@ -756,9 +757,17 @@ function Planner() {
     }
   };
 
-  // Google Maps Style Navigation Rail state
-  const [cardOpen, setCardOpen] = useState(true);
+  // Google Maps Style Navigation Rail state (Initial load starts with search bar over map)
+  const [cardOpen, setCardOpen] = useState(false);
   const [activeRailItem, setActiveRailItem] = useState<"nearby" | "directions" | "live" | "cabs" | "saved" | "recents" | "stats" | "eco">("directions");
+
+  // Google Maps Floating Search Bar selected location
+  const [searchedLocation, setSearchedLocation] = useState<{
+    lat: number;
+    lon: number;
+    name: string;
+    subtitle?: string | undefined;
+  } | null>(null);
 
   // Standalone Uber Cab Options state
   const [cabOrigin, setCabOrigin] = useState<Point | null>(null);
@@ -1249,7 +1258,7 @@ function Planner() {
                 <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
               </span>
             </div>
-            <span>Live Bus</span>
+            <span>Know your Bus</span>
           </button>
 
           {/* Standalone Uber Cabs Button */}
@@ -1728,6 +1737,7 @@ function Planner() {
                 isPolling={isLivePolling}
                 refreshSecondsRemaining={liveRefreshCountdown}
                 onManualRefresh={handleManualLiveRefresh}
+                onSelectBusTimetable={(bus) => setSelectedBusTimetable(bus)}
               />
             )}
 
@@ -2289,6 +2299,51 @@ function Planner() {
 
       {/* ── 3. INTERACTIVE MAP VIEW ── */}
       <div className="relative h-screen flex-1">
+        {/* ── GOOGLE MAPS FLOATING PILL SEARCH BAR OVERLAY (Visible when left sidebar is closed) ── */}
+        {!cardOpen && (
+          <GoogleMapsSearchBar
+            onSelectPlace={(place, subtitle) => {
+              setSearchedLocation({
+                lat: place.lat,
+                lon: place.lon,
+                name: place.name,
+                subtitle,
+              });
+            }}
+            onGetDirections={(destinationPoint) => {
+              setDestination(destinationPoint);
+              setActiveRailItem("directions");
+              setCardOpen(true);
+            }}
+            onExploreNearby={(place) => {
+              setNearbyAnchor({
+                lat: place.lat,
+                lon: place.lon,
+                name: place.name,
+              });
+              setActiveRailItem("nearby");
+              setCardOpen(true);
+            }}
+            onOpenRailItem={(item) => {
+              if (item === "nearby" && searchedLocation) {
+                setNearbyAnchor({
+                  lat: searchedLocation.lat,
+                  lon: searchedLocation.lon,
+                  name: searchedLocation.name || "Selected Location",
+                });
+              }
+              setActiveRailItem(item);
+              setCardOpen(true);
+            }}
+            onToggleBusStops={() => setShowBusStops((v) => !v)}
+            onToggleMetroStations={() => setShowMetroStations((v) => !v)}
+            showBusStops={showBusStops}
+            showMetroStations={showMetroStations}
+            selectedPlace={searchedLocation}
+            onClearSelectedPlace={() => setSearchedLocation(null)}
+          />
+        )}
+
         {isMounted ? (
           <Suspense
             fallback={
@@ -2302,8 +2357,8 @@ function Planner() {
               origin={activeRailItem === "directions" ? origin : null}
               destination={activeRailItem === "directions" ? destination : null}
               showNetwork={showNetwork}
-              showBusStops={showBusStops && activeRailItem === "directions"}
-              showMetroStations={showMetroStations && activeRailItem === "directions"}
+              showBusStops={showBusStops}
+              showMetroStations={showMetroStations}
               picking={
                 activeRailItem === "directions"
                   ? (picking === "origin" || picking === "destination" ? picking : null)
@@ -2325,12 +2380,19 @@ function Planner() {
               liveTelemetry={activeRailItem === "live" ? liveTelemetry : null}
               selectedLiveStop={activeRailItem === "live" ? selectedLiveStop : null}
               onSelectLiveStop={setSelectedLiveStop}
+              onSelectBusTimetable={(bus) => setSelectedBusTimetable(bus)}
               nearbyCabs={activeRailItem === "cabs" ? (cabSearchResults?.nearbyVehicles || []) : []}
               cabOrigin={activeRailItem === "cabs" ? cabOrigin : null}
               cabDestination={activeRailItem === "cabs" ? cabDestination : null}
               cabPolyline={activeRailItem === "cabs" ? (cabSearchResults?.polyline || []) : []}
               cabOriginName={activeRailItem === "cabs" ? cabOrigin?.name : undefined}
               cabDestinationName={activeRailItem === "cabs" ? cabDestination?.name : undefined}
+              searchedLocation={searchedLocation}
+              onDirectionsToSearchedLocation={(loc) => {
+                setDestination(loc);
+                setActiveRailItem("directions");
+                setCardOpen(true);
+              }}
             />
           </Suspense>
         ) : (

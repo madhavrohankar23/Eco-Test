@@ -20,6 +20,15 @@ import type { NearbyStop } from "@/lib/nearby";
 import type { LiveBusRoute, LiveRouteTelemetry, LiveBusStop } from "@/lib/liveBus";
 import { formatLiveEta } from "@/lib/liveBus";
 import type { UberNearbyVehicle } from "@/lib/uberApi";
+import { Clock } from "lucide-react";
+
+// ============================================================================
+// ⚙️ DEVELOPER SETTINGS / TOGGLES
+// Set `ENABLE_DEV_BUS_ROUTE_INSPECTOR` to `true` to display the Bus Route
+// Inspector tool on the map.
+// Set to `false` to completely disable and prevent loading its data/component.
+// ============================================================================
+export const ENABLE_DEV_BUS_ROUTE_INSPECTOR = false; // <-- Change to true or false here
 
 const MODE_COLOR: Record<string, string> = {
   walk: "#64748b",
@@ -459,12 +468,15 @@ export default function MapView({
   liveTelemetry = null,
   selectedLiveStop = null,
   onSelectLiveStop,
+  onSelectBusTimetable,
   nearbyCabs = [],
   cabOrigin = null,
   cabDestination = null,
   cabPolyline = [],
   cabOriginName,
   cabDestinationName,
+  searchedLocation = null,
+  onDirectionsToSearchedLocation,
 }: {
   journey: Journey | null;
   origin?: { lat: number; lon: number; name?: string } | null;
@@ -492,6 +504,13 @@ export default function MapView({
   selectedLiveStop?: LiveBusStop | null;
   /** Callback when a stop along the live bus route is tapped */
   onSelectLiveStop?: ((stop: LiveBusStop | null) => void) | undefined;
+  /** Callback when user wants to open the dedicated right-hand timetable panel */
+  onSelectBusTimetable?: ((bus: {
+    busNumber?: string | undefined;
+    routeName?: string | undefined;
+    fromStop?: string | undefined;
+    toStop?: string | undefined;
+  }) => void) | undefined;
   /** Standalone Uber cab options: nearby vehicle markers */
   nearbyCabs?: UberNearbyVehicle[];
   /** Standalone Uber cab options: pickup point */
@@ -504,6 +523,10 @@ export default function MapView({
   cabOriginName?: string | undefined;
   /** Standalone Uber cab options: destination name */
   cabDestinationName?: string | undefined;
+  /** Google Maps Floating Search Bar selected location */
+  searchedLocation?: { lat: number; lon: number; name?: string | undefined; subtitle?: string | undefined } | null;
+  /** Callback when user clicks directions from the searched location marker on map */
+  onDirectionsToSearchedLocation?: ((loc: { lat: number; lon: number; name: string }) => void) | undefined;
 }) {
   const cartoApiKey = (import.meta.env as Record<string, string | undefined>)["VITE_CARTO_API_KEY"] || "cb1_3m87_1_9a62d04449bdddc8bb5b8466";
   const cartoTileUrl = cartoApiKey
@@ -676,6 +699,54 @@ export default function MapView({
         >
           <Tooltip direction="top" offset={[0, -32]}>{destination.name || "Destination"}</Tooltip>
         </Marker>
+      )}
+
+      {/* ── Google Maps Standalone Searched Location Pin & Popup ── */}
+      {searchedLocation && (
+        <>
+          <CircleMarker
+            center={[searchedLocation.lat, searchedLocation.lon]}
+            radius={22}
+            pathOptions={{ color: "#ef4444", fillColor: "#ef4444", fillOpacity: 0.18, weight: 0 }}
+          />
+          <Marker
+            position={[searchedLocation.lat, searchedLocation.lon]}
+            icon={createDestinationMarkerIcon()}
+          >
+            <Popup autoPan={true} offset={[0, -28]}>
+              <div className="min-w-[190px] max-w-[240px] p-1 font-sans text-slate-900">
+                <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-extrabold text-rose-800">
+                  📍 Pinned Location
+                </span>
+                <h4 className="mt-1 text-sm font-bold text-slate-900 leading-snug">
+                  {searchedLocation.name || "Selected Location"}
+                </h4>
+                {searchedLocation.subtitle && (
+                  <p className="mt-0.5 text-[11px] text-slate-500">{searchedLocation.subtitle}</p>
+                )}
+                {onDirectionsToSearchedLocation && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onDirectionsToSearchedLocation({
+                        lat: searchedLocation.lat,
+                        lon: searchedLocation.lon,
+                        name: searchedLocation.name || "Searched Location",
+                      })
+                    }
+                    className="mt-2.5 flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground shadow-sm transition hover:bg-primary/90 active:scale-95 cursor-pointer"
+                  >
+                    <span>Get Directions</span>
+                  </button>
+                )}
+              </div>
+            </Popup>
+            <Tooltip direction="top" offset={[0, -32]} permanent={false}>
+              {searchedLocation.name || "Searched Location"}
+            </Tooltip>
+          </Marker>
+          <FlyToLocation pos={searchedLocation} />
+        </>
       )}
 
       {/* Nearby anchor pin & search radius coverage circle */}
@@ -886,14 +957,50 @@ export default function MapView({
                             )}
                           </div>
                         ))}
+
+                        {/* View Timetable Button for selected stop */}
+                        {onSelectBusTimetable && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSelectBusTimetable({
+                                busNumber: liveRoute.display_bus_number || liveRoute.bus_number,
+                                routeName: liveRoute.route_name,
+                                fromStop: selectedLiveStop.name,
+                                toStop: liveRoute.to_terminal,
+                              });
+                            }}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50/90 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 transition hover:bg-indigo-100 active:scale-95 cursor-pointer shadow-2xs"
+                          >
+                            <Clock className="size-3 text-indigo-600" />
+                            <span>View Full Timetable</span>
+                          </button>
+                        )}
                       </div>
                     );
                   }
 
                   return (
-                    <div className="mt-2 rounded-xl border border-slate-200/70 bg-slate-50 p-2.5 text-center text-xs text-slate-500">
-                      <p className="font-semibold text-slate-700">No live bus approaching now</p>
-                      <p className="mt-0.5 text-[10px] text-slate-400">Scheduled route service available</p>
+                    <div className="mt-2 rounded-xl border border-slate-200/90 bg-slate-50 p-2.5 text-center text-xs text-slate-600 shadow-2xs">
+                      <p className="font-bold text-slate-800">No live bus approaching now</p>
+                      <p className="mt-0.5 text-[10px] text-slate-500">Scheduled route service available</p>
+                      {onSelectBusTimetable && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSelectBusTimetable({
+                              busNumber: liveRoute.display_bus_number || liveRoute.bus_number,
+                              routeName: liveRoute.route_name,
+                              fromStop: selectedLiveStop.name,
+                              toStop: liveRoute.to_terminal,
+                            });
+                          }}
+                          className="mt-2.5 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-indigo-700 active:scale-95 cursor-pointer"
+                        >
+                          <Clock className="size-3.5" />
+                          <span>View Timetable</span>
+                        </button>
+                      )}
                     </div>
                   );
                 })()}
@@ -1012,7 +1119,9 @@ export default function MapView({
         );
       })()}
 
-      <DevBusRouteInspector />
+      {/* ── Dev Bus Route Inspector (Controlled by ENABLE_DEV_BUS_ROUTE_INSPECTOR toggle at top of file) ── */}
+      {ENABLE_DEV_BUS_ROUTE_INSPECTOR && <DevBusRouteInspector />}
+
       <ClickHandler onClick={onMapClick} />
       <Fit journey={journey} />
     </MapContainer>

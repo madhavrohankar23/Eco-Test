@@ -36,6 +36,13 @@ interface LiveBusTrackerProps {
   isPolling: boolean;
   refreshSecondsRemaining: number;
   onManualRefresh: () => void;
+  /** Callback to open the dedicated right-hand timetable panel (matching routing) */
+  onSelectBusTimetable?: ((bus: {
+    busNumber?: string | undefined;
+    routeName?: string | undefined;
+    fromStop?: string | undefined;
+    toStop?: string | undefined;
+  }) => void) | undefined;
 }
 
 export default function LiveBusTracker({
@@ -47,6 +54,7 @@ export default function LiveBusTracker({
   isPolling,
   refreshSecondsRemaining,
   onManualRefresh,
+  onSelectBusTimetable,
 }: LiveBusTrackerProps) {
   const [query, setQuery] = useState("");
   const [showTimetable, setShowTimetable] = useState(false);
@@ -318,15 +326,25 @@ export default function LiveBusTracker({
                 ))}
               </div>
             ) : (
-              /* Fallback banner when no live GPS is available */
               <div className="mt-3 border-t border-border/50 pt-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[11px] text-muted-foreground">
                     Live GPS is currently offline for this route.
                   </p>
                   <button
-                    onClick={() => setShowTimetable(true)}
-                    className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs transition hover:bg-indigo-700 active:scale-95"
+                    onClick={() => {
+                      if (onSelectBusTimetable) {
+                        onSelectBusTimetable({
+                          busNumber: selectedRoute.display_bus_number || selectedRoute.bus_number,
+                          routeName: selectedRoute.route_name,
+                          fromStop: selectedRoute.from_terminal,
+                          toStop: selectedRoute.to_terminal,
+                        });
+                      } else {
+                        setShowTimetable(true);
+                      }
+                    }}
+                    className="flex shrink-0 items-center gap-1 rounded-xl bg-indigo-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-xs transition hover:bg-indigo-700 active:scale-95 cursor-pointer"
                   >
                     <Clock className="size-3" />
                     View Timetable
@@ -458,6 +476,28 @@ export default function LiveBusTracker({
                           </div>
                         </div>
                       ))}
+
+                      {/* View Stop Timetable */}
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          onClick={() => {
+                            if (onSelectBusTimetable) {
+                              onSelectBusTimetable({
+                                busNumber: selectedRoute.display_bus_number || selectedRoute.bus_number,
+                                routeName: selectedRoute.route_name,
+                                fromStop: selectedStop.name,
+                                toStop: selectedRoute.to_terminal,
+                              });
+                            } else {
+                              setShowTimetable(true);
+                            }
+                          }}
+                          className="flex items-center gap-1 rounded-lg bg-indigo-100 px-2.5 py-1 text-[10px] font-bold text-indigo-700 transition hover:bg-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 cursor-pointer"
+                        >
+                          <Clock className="size-2.5" />
+                          View Stop Timetable
+                        </button>
+                      </div>
                     </div>
                   );
                 }
@@ -473,8 +513,19 @@ export default function LiveBusTracker({
                     </p>
                     <div className="mt-2 flex justify-end">
                       <button
-                        onClick={() => setShowTimetable(true)}
-                        className="flex items-center gap-1 rounded-lg bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-700 transition hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-300"
+                        onClick={() => {
+                          if (onSelectBusTimetable) {
+                            onSelectBusTimetable({
+                              busNumber: selectedRoute.display_bus_number || selectedRoute.bus_number,
+                              routeName: selectedRoute.route_name,
+                              fromStop: selectedStop.name,
+                              toStop: selectedRoute.to_terminal,
+                            });
+                          } else {
+                            setShowTimetable(true);
+                          }
+                        }}
+                        className="flex items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-[10px] font-bold text-indigo-700 transition hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 cursor-pointer"
                       >
                         <Clock className="size-2.5" />
                         View Timetable
