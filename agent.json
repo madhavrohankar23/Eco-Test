@@ -1,0 +1,343 @@
+{
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "explain-route",
+                "responseMode": "responseNode",
+                "options": {
+                    "allowedOrigins": "*"
+                }
+            },
+            "id": "5a4f3842-bc3d-40be-a7b2-077f07aa6d23",
+            "name": "Webhook (Explain Route)",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                -192,
+                208
+            ],
+            "webhookId": "explain-route"
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=You are AI Agent #2: Eco-Move Nagpur Route Explainer & Comparative Analyst.\n\nRoute Details:\n- Action: {{ $json.body.action || \"\" }}\n- Language: {{ $json.body.language || \"English\" }}\n- From: {{ $json.body.from || \"\" }}\n- To: {{ $json.body.to || \"\" }}\n- Total Time: {{ $json.body.totalTime || \"\" }}\n- Total Fare: {{ $json.body.totalFare || \"\" }}\n- Carbon Saved: {{ $json.body.co2Saved || \"\" }}\n- Transfers: {{ $json.body.transfers || \"\" }}\n- Legs: {{ JSON.stringify($json.body.legs || []) }}\n- Multi-Route Options: {{ JSON.stringify($json.body.options || []) }}\n\nTASK:\nProduce an empathetic, commuter-friendly, step-by-step route breakdown or multi-route comparison.\nUse clear bullet points with natural transit verbs (\"hop on\", \"alight at\", \"catch Metro Blue Line\").\nHighlight senior-friendly facilities (elevators/lifts at Metro stations, reserved front seats on Aapli Bus, exact cash fares).\n\nOUTPUT FORMAT: Return raw JSON only (no ```json):\n{\n  \"status\": \"success\",\n  \"intent\": \"ROUTE_EXPLAINED\",\n  \"explanation\": \"Your step-by-step route explanation...\",\n  \"replyMessage\": \"Your step-by-step route explanation...\",\n  \"from\": \"{{ $json.body.from }}\",\n  \"to\": \"{{ $json.body.to }}\"\n}"
+            },
+            "id": "8857f2a4-3428-449f-bc3f-89c34acfa3fb",
+            "name": "AI #2 Route Explainer",
+            "type": "@n8n/n8n-nodes-langchain.chainLlm",
+            "typeVersion": 1.4,
+            "position": [
+                432,
+                208
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ (() => {\n  const raw = $json.text || '';\n  const cleaned = raw.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/\\s*```$/i, '').trim();\n  try {\n    const parsed = JSON.parse(cleaned);\n    parsed.generatedAt = $now.toISO();\n    return parsed;\n  } catch (e) {\n    return {\n      status: 'success',\n      intent: 'GENERAL_ANSWER',\n      explanation: raw,\n      replyMessage: raw,\n      generatedAt: $now.toISO()\n    };\n  }\n})() }}",
+                "options": {
+                    "responseCode": 200
+                }
+            },
+            "id": "e6999403-766c-47df-8d6b-76b098b82a03",
+            "name": "Respond to Webhook",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                752,
+                208
+            ]
+        },
+        {
+            "parameters": {
+                "model": {
+                    "__rl": true,
+                    "value": "gpt-5-mini",
+                    "mode": "list",
+                    "cachedResultName": "gpt-5-mini"
+                },
+                "builtInTools": {},
+                "options": {}
+            },
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            "typeVersion": 1.3,
+            "position": [
+                880,
+                416
+            ],
+            "id": "67f6732a-bae0-4df6-9682-52eb39721936",
+            "name": "OpenAI Chat Model",
+            "credentials": {
+                "openAiApi": {
+                    "id": null,
+                    "name": "",
+                    "__aiGatewayManaged": true
+                }
+            }
+        },
+        {
+            "parameters": {
+                "mode": "expression",
+                "numberOutputs": 3,
+                "output": "={{ (() => {\n  const act = $json.body?.action || '';\n  if (act === 'PARSE_NATURAL_LANGUAGE_COMMAND' || act === 'PARSE_INTENT' || ($json.body?.query && !$json.body?.legs && act !== 'CHATBOT_QUERY')) return 0;\n  if (act === 'EXPLAIN_ROUTE' || act === 'COMPARE_ROUTES' || $json.body?.legs || $json.body?.options) return 1;\n  return 2;\n})() }}"
+            },
+            "id": "switch-router-node",
+            "name": "Switch Router",
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 3.4,
+            "position": [
+                32,
+                192
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "=You are AI Agent #1: Nagpur Transit Natural Language Intent Parser.\n\nUser Input Query: {{ $json.body.query || $json.body.userQuery || \"\" }}\nUser Location: {{ $json.body.userLocation || \"Your location\" }}\n\nTASK:\nExtract structured transit intent from natural language or voice speech in English, Hindi, Hinglish, or Marathi.\nClean and normalize place names (e.g. \"etwari\" -> \"Itwari\", \"sitaburdi\" -> \"Sitabuldi\", \"hingna rod\" -> \"Hingna\", \"eternity mall\" -> \"Eternity Mall\").\n\nHINDI KEYWORDS:\n- \"mere location se\" / \"from here\" -> origin = \"Your location\"\n- \"abhi ke abhi\" / \"turant\" / \"right now\" -> departureTime = \"now\"\n- \"jald se jald\" / \"jaldi\" / \"fastest\" -> preference = \"fastest\"\n- \"sasta\" / \"cheapest\" -> preference = \"cheapest\"\n\nIntents:\n1. \"PLAN_ROUTE\" -> User wants directions from A to B. Extract: origin, destination, preference, departureTime.\n2. \"FIND_NEARBY\" -> Nearby transit stops. Extract: nearbyLocation, nearbyRadiusM, nearbyMode.\n3. \"TRACK_BUS\" -> Live status of a bus. Extract: busNumber.\n4. \"VIEW_TIMETABLE\" -> Bus schedule/timings. Extract: busNumber, stopName.\n5. \"GENERAL_ANSWER\" -> Transit questions.\n\nOUTPUT FORMAT: Return raw JSON only (no markdown, no ```json):\n{\n  \"status\": \"success\",\n  \"intent\": \"PLAN_ROUTE\",\n  \"origin\": \"Your location\",\n  \"destination\": \"Eternity Mall\",\n  \"preference\": \"fastest\",\n  \"departureTime\": \"now\",\n  \"busNumber\": null,\n  \"stopName\": null,\n  \"nearbyLocation\": null,\n  \"nearbyRadiusM\": null,\n  \"nearbyMode\": null,\n  \"replyMessage\": \"Planning the fastest route from your location to Eternity Mall right now.\",\n  \"explanation\": \"Planning the fastest route from your location to Eternity Mall right now.\"\n}"
+            },
+            "id": "ai-intent-parser-node",
+            "name": "AI #1 Intent Parser",
+            "type": "@n8n/n8n-nodes-langchain.chainLlm",
+            "typeVersion": 1.4,
+            "position": [
+                416,
+                -32
+            ]
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "==You are AI Agent #3: Eco-Move Nagpur Master Transit Knowledge Assistant.\n\nUser Question: {{ $json.query || $json.body?.query || \"\" }}\n\nGROUND-TRUTH EXTRACTED CONTEXT (FROM OFFICIAL NAGPUR DATASETS):\n• Target Mode / Transit: {{ $json.extractedBus ? \"Aapli Bus \" + $json.extractedBus : ($json.intentType === \"METRO_QUERY\" ? \"Nagpur Maha Metro\" : \"Nagpur Public Transit\") }}\n• Boarding Stop: {{ $json.extractedFrom || \"N/A\" }}\n• Destination Stop: {{ $json.extractedTo || \"N/A\" }}\n{{ $json.hasExactFare ? \"★ VERIFIED OFFICIAL DATASET FARE: ₹\" + $json.exactFare + \" (Source: \" + $json.source + \")\" : \"\" }}\n{{ $json.hasSchedule ? \"★ VERIFIED OFFICIAL BUS TIMETABLE: Route = \" + $json.scheduleRoute + \" | Operating Hours = \" + $json.scheduleFirstBus + \" to \" + $json.scheduleLastBus + \" | Total Departures = \" + $json.scheduleTrips + \" trips/day | Sample Timings = \" + $json.scheduleDepartures : \"\" }}\n\nSTRICT ZERO-HALLUCINATION RULES:\n\n1. BUS SCHEDULE / TIMETABLE QUERIES:\n• If the user asks for a bus schedule or timings (e.g. \"schedule of bus no. 35\", \"timings of bus 1\"):\n  - If \"VERIFIED OFFICIAL BUS TIMETABLE\" is present above, provide the route name, first & last bus times, total daily trips, and sample departure timings clearly.\n  - If no specific schedule was matched, state the general Aapli Bus schedule: Buses operate daily from 06:00 AM to 09:30 PM with 10–20 minute frequency on main corridors.\n\n2. BUS & METRO FARE QUERIES:\n• If \"VERIFIED OFFICIAL DATASET FARE\" is present above (e.g. ₹{{ $json.exactFare }}), you MUST state this exact fare. Never invent, guess, or recalculate a conflicting amount.\n• If no exact stop-pair is specified:\n  - Aapli Bus Fare Stage Rule: Minimum fare ₹12 (1-3 km), ₹16-₹24 for medium city routes, and ₹32-₹68 for long suburban / cross-city routes (e.g., Bus 207E to Butibori is ₹63, Bus 1 is ₹39).\n  - Maha Metro Fare Slabs: ₹10 (1-3 stations), ₹15 (4-6 stations), ₹20 (7-9 stations), ₹25 (10-12 stations), ₹30 (13-15 stations), ₹35 (16-19 stations), ₹40 (20+ stations end-to-end).\n\n3. MAHA METRO GENERAL INFORMATION:\n• Operating Hours: 06:00 AM to 10:00 PM daily. Peak frequency: 8-10 mins. Non-peak: 12-15 mins.\n• Orange Line (North-South): Automotive Square ➔ Sitabuldi Interchange ➔ Airport ➔ Khapri.\n• Aqua Line (East-West): Prajapati Nagar ➔ Nagpur Railway Station ➔ Sitabuldi Interchange ➔ Lokmanya Nagar.\n• MahaCard Smart Card: 10% discount on every trip. Senior Citizens (60+): 33% concession.\n• Lifts & Accessibility: 100% stations have elevators and wheelchair ramps.\n\nOUTPUT INSTRUCTIONS:\n- Directly answer the question with clean formatting, bullet points, and emojis (🚌, 🚇, ⏱️, 💰, 📍).\n- Return raw JSON ONLY (no markdown code blocks, no ```json):\n\n{\n  \"status\": \"success\",\n  \"intent\": \"GENERAL_ANSWER\",\n  \"replyMessage\": \"Your accurate, fact-checked transit answer...\",\n  \"explanation\": \"Your accurate, fact-checked transit answer...\"\n}\n"
+            },
+            "id": "ai-transit-qa-node",
+            "name": "AI #3 Transit Q&A",
+            "type": "@n8n/n8n-nodes-langchain.chainLlm",
+            "typeVersion": 1.4,
+            "position": [
+                368,
+                384
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "dataTableId": {
+                    "__rl": true,
+                    "value": "129olFPGiyF2HFjZ",
+                    "mode": "list",
+                    "cachedResultName": "metro_fares",
+                    "cachedResultUrl": "/projects/AVpKGJLQ73abUD9l/datatables/129olFPGiyF2HFjZ"
+                },
+                "returnAll": true
+            },
+            "type": "n8n-nodes-base.dataTable",
+            "typeVersion": 1.1,
+            "position": [
+                560,
+                544
+            ],
+            "id": "ae8b60fe-f1f4-4cae-8a93-656db32696c4",
+            "name": "Get row(s)"
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "dataTableId": {
+                    "__rl": true,
+                    "value": "V4TpLFj6HtkuiFbi",
+                    "mode": "list",
+                    "cachedResultName": "bus_schedules",
+                    "cachedResultUrl": "/projects/AVpKGJLQ73abUD9l/datatables/V4TpLFj6HtkuiFbi"
+                },
+                "returnAll": true
+            },
+            "type": "n8n-nodes-base.dataTable",
+            "typeVersion": 1.1,
+            "position": [
+                736,
+                544
+            ],
+            "id": "752d889d-ca04-44da-a80a-0a5aa2304853",
+            "name": "Get row(s)1"
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "dataTableId": {
+                    "__rl": true,
+                    "value": "fS04znUUzl0RJ3Vv",
+                    "mode": "list",
+                    "cachedResultName": "bus_fares",
+                    "cachedResultUrl": "/projects/AVpKGJLQ73abUD9l/datatables/fS04znUUzl0RJ3Vv"
+                },
+                "returnAll": true
+            },
+            "type": "n8n-nodes-base.dataTable",
+            "typeVersion": 1.1,
+            "position": [
+                400,
+                544
+            ],
+            "id": "256a54be-08f2-427d-82d2-7c4ea3585f94",
+            "name": "Get row(s)2"
+        },
+        {
+            "parameters": {
+                "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst query = (body.query || body.userQuery || '').toLowerCase();\n\n// 1. Check if verified info was attached from the app\nconst verified = body.verifiedDatasetInfo || null;\n\n// 2. Determine Query Type (Schedule vs Fare vs Metro)\nconst isSchedule = body.queryType === 'bus_schedule' ||\n  query.includes('schedule') || query.includes('timetable') || query.includes('timing') ||\n  query.includes('timings') || query.includes('first bus') || query.includes('last bus') ||\n  query.includes('frequency') || query.includes('kab aayegi');\n\nconst isMetro = body.queryType === 'metro_fare' || query.includes('metro');\n\n// 3. Extract Bus Number (e.g., 35, 207E, 1, 135, 245, etc.)\nconst busMatch = query.match(/(?:bus\\s*(?:no\\.?|number)?\\s*)([0-9a-zA-Z-]+)/i) || query.match(/([0-9a-zA-Z-]+)\\s*number\\s*bus/i);\nconst extractedBus = verified?.busNumber || (busMatch ? busMatch[1].toUpperCase() : null);\n\n// 4. Extract Stops (if specified)\nlet extractedFrom = verified?.from || null;\nlet extractedTo = verified?.to || null;\nif (!extractedFrom || !extractedTo) {\n  const fromToMatch = query.match(/from\\s+([a-zA-Z0-9\\s]+?)\\s+to\\s+([a-zA-Z0-9\\s]+)/i) ||\n                      query.match(/(?:between|se)\\s+([a-zA-Z0-9\\s]+?)\\s+(?:and|to|se)\\s+([a-zA-Z0-9\\s]+)/i);\n  if (fromToMatch) {\n    extractedFrom = fromToMatch[1].trim();\n    extractedTo = fromToMatch[2].trim();\n  }\n}\n\n// 5. Extract Schedule Summary (if attached)\nconst sched = verified?.scheduleSummary || body.scheduleSummary || null;\n\n// 6. Extract Exact Fare (if attached)\nconst exactFare = verified?.exactFare ?? body.exactFare ?? null;\nconst source = verified?.source || (isSchedule ? 'Official Aapli Bus Schedules' : 'Official Nagpur Transit Matrix');\n\nreturn [{\n  json: {\n    ...body,\n    intentType: isSchedule ? 'BUS_SCHEDULE' : (isMetro ? 'METRO_QUERY' : 'BUS_FARE'),\n    extractedBus,\n    extractedFrom,\n    extractedTo,\n    exactFare,\n    hasExactFare: exactFare !== null,\n    hasSchedule: sched !== null,\n    scheduleRoute: sched?.routeName || null,\n    scheduleTrips: sched?.tripsPerDay || null,\n    scheduleFirstBus: sched?.firstBus || null,\n    scheduleLastBus: sched?.lastBus || null,\n    scheduleDepartures: sched?.sampleDepartures || null,\n    source\n  }\n}];\n"
+            },
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                208,
+                320
+            ],
+            "id": "50fd94e8-286b-4ce0-87dc-827b9154563e",
+            "name": "Code in JavaScript"
+        }
+    ],
+    "connections": {
+        "Webhook (Explain Route)": {
+            "main": [
+                [
+                    {
+                        "node": "Switch Router",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI #2 Route Explainer": {
+            "main": [
+                [
+                    {
+                        "node": "Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "OpenAI Chat Model": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "AI #2 Route Explainer",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    },
+                    {
+                        "node": "AI #1 Intent Parser",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    },
+                    {
+                        "node": "AI #3 Transit Q&A",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Switch Router": {
+            "main": [
+                [
+                    {
+                        "node": "AI #1 Intent Parser",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "AI #2 Route Explainer",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Code in JavaScript",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI #1 Intent Parser": {
+            "main": [
+                [
+                    {
+                        "node": "Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI #3 Transit Q&A": {
+            "main": [
+                [
+                    {
+                        "node": "Respond to Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get row(s)": {
+            "main": [
+                [
+                    {
+                        "node": "AI #3 Transit Q&A",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get row(s)1": {
+            "main": [
+                [
+                    {
+                        "node": "AI #3 Transit Q&A",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Get row(s)2": {
+            "main": [
+                [
+                    {
+                        "node": "AI #3 Transit Q&A",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Code in JavaScript": {
+            "main": [
+                [
+                    {
+                        "node": "AI #3 Transit Q&A",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "pinData": {},
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "aiBuilderAssisted": true,
+        "builderVariant": "mcp",
+        "instanceId": "f0d3431c2e88b22c4cddac74f872d87e8e3e5e94529ade67d488a204ac67fd0e"
+    }
+}

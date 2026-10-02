@@ -1,0 +1,53 @@
+# 1. SUPABASE (Database, Auth & Realtime Sync)
+VITE_SUPABASE_URL=https://gixagpfbhfuyxlhqpqui.supabase.co
+VITE_SUPABASE_ANON_KEY=sb_publishable_AFY0PrmnDhihRjpg00GsoQ_DIKVS9PP
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_AFY0PrmnDhihRjpg00GsoQ_DIKVS9PP
+
+
+# 2. N8N AI WORKFLOWS & WEBHOOKS (AI Transit Mitra & Intelligent Route Assistant)
+# Production Webhook for Single Route Explain & Multi-Route Comparison Agent
+VITE_N8N_WEBHOOK_URL=https://rohit134.app.n8n.cloud/webhook/explain-route
+# Test Webhook for Staging & Workflow Editor Testing
+VITE_N8N_TEST_WEBHOOK_URL=https://rohit134.app.n8n.cloud/webhook-test/explain-route
+
+
+# 3. OPENROUTESERVICE & OPENSTREETMAP ROUTING ENGINES (Walking & Driving Polyline)
+VITE_ORS_API_KEY=eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU4ODhiYjRlNWFkODQzNjFiYTJkY2NkZDMxM2I3YzRjIiwiaCI6Im11cm11cjY0In0=
+VITE_ORS_BASE_URL=https://api.openrouteservice.org/v2/directions/foot-walking/geojson
+VITE_OSM_FOOT_ROUTING_URL=https://routing.openstreetmap.de/routed-foot/route/v1/driving
+VITE_OSM_CAR_ROUTING_URL=https://routing.openstreetmap.de/routed-car/route/v1/driving
+VITE_OSRM_FOOT_ROUTING_URL=https://router.project-osrm.org/route/v1/foot
+VITE_OSRM_DRIVING_ROUTING_URL=https://router.project-osrm.org/route/v1/driving
+
+
+# 4. MAP TILES & VISUAL LAYERS (Carto Voyager & Google Maps Roadmap)
+VITE_CARTO_API_KEY=cb1_3m87_1_9a62d04449bdddc8bb5b8466
+VITE_CARTO_TILE_URL=https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png
+VITE_GOOGLE_MAPS_TILE_URL=https://mt{s}.google.com/vt/lyrs=r&x={x}&y={y}&z={z}
+
+
+# 5. CHALO MOBILITY APIS (Nagpur Live Bus Schedule & GPS Telemetry)
+VITE_CHALO_ROUTE_DETAILS_LIVE_API=https://chalo.com/app/api/scheduler_v4/v4/nagpur/routedetailslive
+VITE_CHALO_LIVE_TELEMETRY_API=https://chalo.com/app/api/vasudha/track/route-live-info/nagpur
+
+
+# 6. UBER WEB SERVICES (Cab Fares, ETA Estimates & Road Navigation)
+VITE_UBER_GRAPHQL_ENDPOINT=https://m.uber.com/go/graphql
+VITE_UBER_NAV_ROUTE_ENDPOINT=https://m.uber.com/go/custom-api/navigation/route
+
+
+# 7. GEOCODING & PLACES SEARCH ENGINES (Nominatim & Photon)
+VITE_NOMINATIM_GEOCODING_URL=https://nominatim.openstreetmap.org/search
+VITE_PHOTON_GEOCODING_URL=https://photon.komoot.io/api
+
+
+
+VITE_GOOGLE_MAPS_API_KEY=AIzaSyAdGOJkO2DIXEM9u7RFD_Q5li0yFFCN3pc
+
+
+# 8. GMAIL SMTP (Automated Ticket Pass Dispatch)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=ecomove.teams@gmail.com
+SMTP_PASS=abmwrmjjlknmwuai
+SMTP_FROM="Eco-Move Nagpur" <ecomove.teams@gmail.com>
