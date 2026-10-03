@@ -5,6 +5,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "../context/AuthContext";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import PlaceSearch, { type Point } from "@/components/PlaceSearch";
+import { VoiceMicButton } from "@/components/VoiceMicButton";
 import { Button } from "@/components/ui/button";
 import {
   IndianRupee,
@@ -727,6 +728,7 @@ function Planner() {
   const planTokenRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const [locating, setLocating] = useState(false);
   const [locError, setLocError] = useState<string | null>(null);
+  const [voiceMsg, setVoiceMsg] = useState<string | null>(null);
 
   // Automatically clear planned route recommendations and map polylines when source or destination is cleared
   useEffect(() => {
@@ -1796,16 +1798,39 @@ function Planner() {
                     />
                   </div>
 
-                  {/* Swap Button */}
-                  <button
-                    type="button"
-                    onClick={swap}
-                    title="Swap origin and destination"
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded-xl border border-border bg-white p-2 text-muted-foreground shadow-sm transition hover:bg-secondary hover:text-foreground active:scale-95 dark:bg-card"
-                  >
-                    <Repeat className="size-4 rotate-90" />
-                  </button>
+                  {/* Swap & Voice Buttons */}
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={swap}
+                      title="Swap origin and destination"
+                      className="rounded-xl border border-border bg-white p-2 text-muted-foreground shadow-sm transition hover:bg-secondary hover:text-foreground active:scale-95 dark:bg-card"
+                    >
+                      <Repeat className="size-4 rotate-90" />
+                    </button>
+                    <VoiceMicButton 
+                      onSuccess={(o, d, voicePref) => {
+                        setOrigin(o);
+                        setDestination(d);
+                        setLocError(null);
+                        if (voicePref) {
+                          setPref(voicePref);
+                          plan(o, d, voicePref);
+                        } else {
+                          plan(o, d);
+                        }
+                      }}
+                      onError={(err) => setLocError(err)}
+                      onMessage={(msg) => setVoiceMsg(msg)}
+                    />
+                  </div>
                 </div>
+
+                {voiceMsg && (
+                  <p className="rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary font-medium italic animate-pulse">
+                    {voiceMsg}
+                  </p>
+                )}
 
                 {locError && (
                   <p className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
